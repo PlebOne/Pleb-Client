@@ -169,11 +169,13 @@ Rectangle {
                     clip: true
                     
                     Image {
+                        id: sidebarProfileImage
                         anchors.fill: parent
                         source: profilePicture
-                        visible: profilePicture !== ""
+                        visible: profilePicture !== "" && status === Image.Ready
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
+                        cache: true
                         
                         // Rounded clipping
                         layer.enabled: true
@@ -181,6 +183,12 @@ Rectangle {
                             Rectangle {
                                 anchors.fill: parent
                                 radius: 22
+                            }
+                        }
+                        
+                        onStatusChanged: {
+                            if (status === Image.Error) {
+                                console.log("Sidebar: Failed to load profile picture:", profilePicture)
                             }
                         }
                     }
@@ -191,7 +199,7 @@ Rectangle {
                         color: "#ffffff"
                         font.pixelSize: 18
                         font.weight: Font.Bold
-                        visible: profilePicture === ""
+                        visible: sidebarProfileImage.status !== Image.Ready
                     }
                 }
                 

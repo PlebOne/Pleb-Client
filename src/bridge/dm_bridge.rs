@@ -93,6 +93,9 @@ use crate::nostr::dm::{DmManager, DmMessage, DmConversation, DmProtocol, fetch_n
 use crate::nostr::relay::DEFAULT_TIMEOUT;
 use crate::nostr::profile::ProfileCache;
 
+// Cache duration for DMs (5 minutes)
+const DM_CACHE_DURATION_SECS: u64 = 5 * 60;
+
 // Global state
 lazy_static::lazy_static! {
     static ref DM_RUNTIME: tokio::runtime::Runtime = tokio::runtime::Runtime::new().unwrap();
@@ -103,6 +106,8 @@ lazy_static::lazy_static! {
     static ref DM_CLIENT: Arc<std::sync::RwLock<Option<Client>>> = Arc::new(std::sync::RwLock::new(None));
     // User's nsec for local encryption/signing
     static ref DM_NSEC: Arc<std::sync::RwLock<Option<String>>> = Arc::new(std::sync::RwLock::new(None));
+    // Last fetch timestamp for caching
+    static ref DM_LAST_FETCH: Arc<std::sync::RwLock<Option<std::time::Instant>>> = Arc::new(std::sync::RwLock::new(None));
 }
 
 /// Rust implementation of DmController
@@ -204,7 +209,45 @@ impl qobject::DmController {
     }
 
     pub fn load_conversations(mut self: Pin<&mut Self>) {
-        tracing::info!("Loading DM conversations...");
+        self.load_conversations_with_cache(false);
+    }
+    
+    /// Load conversations, optionally forcing a network refresh
+    fn load_conversations_with_cache(mut self: Pin<&mut Self>, force_refresh: bool) {
+        // Check if we have cached data and it's still fresh
+        let should_use_cache = if force_refresh {
+            false
+        } else {
+            let last_fetch = DM_LAST_FETCH.read().unwrap();
+            if let Some(instant) = *last_fetch {
+                let elapsed = instant.elapsed().as_secs();
+                if elapsed < DM_CACHE_DURATION_SECS {
+                    // Check if we actually have cached conversations
+                    let dm_mgr = DM_MANAGER.read().unwrap();
+                    !dm_mgr.get_conversations().is_empty()
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        
+        if should_use_cache {
+            tracing::info!("Using cached DM conversations");
+            let dm_mgr = DM_MANAGER.read().unwrap();
+            let count = dm_mgr.get_conversations().len() as i32;
+            let unread = dm_mgr.total_unread() as i32;
+            drop(dm_mgr);
+            
+            self.as_mut().set_conversation_count(count);
+            self.as_mut().set_unread_count(unread);
+            self.as_mut().set_is_loading(false);
+            self.as_mut().conversations_updated();
+            return;
+        }
+        
+        tracing::info!("Loading DM conversations from network...");
         
         let user_pubkey = match &self.user_pubkey {
             Some(pk) => pk.clone(),
@@ -353,6 +396,12 @@ impl qobject::DmController {
                 let unread = dm_mgr.total_unread() as i32;
                 
                 drop(dm_mgr);
+                
+                // Update cache timestamp
+                {
+                    let mut last_fetch = DM_LAST_FETCH.write().unwrap();
+                    *last_fetch = Some(std::time::Instant::now());
+                }
                 
                 self.as_mut().set_conversation_count(count);
                 self.as_mut().set_unread_count(unread);
@@ -616,8 +665,8 @@ impl qobject::DmController {
     }
     
     pub fn refresh(mut self: Pin<&mut Self>) {
-        tracing::info!("Refreshing DMs...");
-        self.load_conversations();
+        tracing::info!("Refreshing DMs (forcing network fetch)...");
+        self.load_conversations_with_cache(true);
     }
 }
 

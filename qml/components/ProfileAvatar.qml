@@ -21,6 +21,12 @@ Rectangle {
         sourceSize.height: root.height * 2
         layer.enabled: true
         // layer.effect: OpacityMask would need import
+        
+        onStatusChanged: {
+            if (status === Image.Error) {
+                console.log("ProfileAvatar: Failed to load image:", imageUrl)
+            }
+        }
     }
     
     // Loading indicator for avatar
@@ -37,6 +43,6 @@ Rectangle {
         color: "#ffffff"
         font.pixelSize: parent.width * 0.4
         font.weight: Font.Bold
-        visible: !avatarImage.visible && avatarImage.status !== Image.Loading
+        visible: avatarImage.status !== Image.Ready && avatarImage.status !== Image.Loading
     }
 }
