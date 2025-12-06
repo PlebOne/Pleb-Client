@@ -129,6 +129,10 @@ Popup {
                         text: "Open externally"
                         onClicked: Qt.openUrlExternally(root.imageUrl)
                         
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Open image in default browser"
+                        ToolTip.delay: 500
+                        
                         background: Rectangle {
                             color: parent.hovered ? "#3a3a3a" : "#2a2a2a"
                             radius: 8
@@ -154,6 +158,10 @@ Popup {
             width: 44
             height: 44
             
+            ToolTip.visible: hovered
+            ToolTip.text: "Close viewer (Esc)"
+            ToolTip.delay: 500
+            
             background: Rectangle {
                 color: parent.hovered ? "#ffffff30" : "#ffffff20"
                 radius: 22
@@ -178,6 +186,10 @@ Popup {
             width: 44
             height: 44
             visible: root.imageList.length > 1 && root.currentIndex > 0
+            
+            ToolTip.visible: hovered
+            ToolTip.text: "Previous image (←)"
+            ToolTip.delay: 500
             
             background: Rectangle {
                 color: parent.hovered ? "#ffffff30" : "#ffffff20"
@@ -206,6 +218,10 @@ Popup {
             width: 44
             height: 44
             visible: root.imageList.length > 1 && root.currentIndex < root.imageList.length - 1
+            
+            ToolTip.visible: hovered
+            ToolTip.text: "Next image (→)"
+            ToolTip.delay: 500
             
             background: Rectangle {
                 color: parent.hovered ? "#ffffff30" : "#ffffff20"
@@ -259,6 +275,10 @@ Popup {
                 width: 36
                 height: 36
                 
+                ToolTip.visible: hovered
+                ToolTip.text: "Zoom out"
+                ToolTip.delay: 500
+                
                 background: Rectangle {
                     color: parent.hovered ? "#ffffff30" : "#ffffff20"
                     radius: 8
@@ -288,6 +308,10 @@ Popup {
             Button {
                 width: 36
                 height: 36
+                
+                ToolTip.visible: hovered
+                ToolTip.text: "Zoom in"
+                ToolTip.delay: 500
                 
                 background: Rectangle {
                     color: parent.hovered ? "#ffffff30" : "#ffffff20"

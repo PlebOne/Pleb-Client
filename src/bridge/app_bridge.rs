@@ -152,7 +152,7 @@ use cxx_qt_lib::QString;
 use tokio::sync::Mutex;
 use crate::signer::SignerClient;
 use crate::core::credentials::CredentialManager;
-use crate::nostr::nwc::NwcManager;
+use crate::nostr::GLOBAL_NWC_MANAGER;
 use crate::bridge::feed_bridge::set_feed_nsec;
 use crate::bridge::dm_bridge::set_dm_nsec;
 
@@ -160,7 +160,6 @@ use crate::bridge::dm_bridge::set_dm_nsec;
 lazy_static::lazy_static! {
     static ref SIGNER_CLIENT: Arc<Mutex<Option<SignerClient>>> = Arc::new(Mutex::new(None));
     static ref TOKIO_RUNTIME: tokio::runtime::Runtime = tokio::runtime::Runtime::new().unwrap();
-    static ref NWC_MANAGER: Arc<Mutex<NwcManager>> = Arc::new(Mutex::new(NwcManager::new()));
 }
 
 /// Rust implementation of AppController
@@ -401,7 +400,7 @@ impl qobject::AppController {
                                         // Connect NWC in background
                                         let result = std::thread::spawn(move || {
                                             TOKIO_RUNTIME.block_on(async {
-                                                let mut nwc = NWC_MANAGER.lock().await;
+                                                let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                                                 nwc.connect(&uri).await?;
                                                 let balance = nwc.balance_sats();
                                                 Ok::<_, String>(balance)
@@ -545,7 +544,7 @@ impl qobject::AppController {
         // Connect in background
         let result = std::thread::spawn(move || {
             TOKIO_RUNTIME.block_on(async {
-                let mut nwc = NWC_MANAGER.lock().await;
+                let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                 nwc.connect(&uri_str).await?;
                 let balance = nwc.balance_sats();
                 Ok::<_, String>(balance)
@@ -586,7 +585,7 @@ impl qobject::AppController {
         // Connect in background
         let result = std::thread::spawn(move || {
             TOKIO_RUNTIME.block_on(async {
-                let mut nwc = NWC_MANAGER.lock().await;
+                let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                 nwc.connect(&uri_str).await?;
                 let balance = nwc.balance_sats();
                 Ok::<_, String>((balance, uri_str))
@@ -634,7 +633,7 @@ impl qobject::AppController {
         // Disconnect in background
         let result = std::thread::spawn(move || {
             TOKIO_RUNTIME.block_on(async {
-                let mut nwc = NWC_MANAGER.lock().await;
+                let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                 nwc.disconnect().await;
             })
         }).join();
@@ -656,7 +655,7 @@ impl qobject::AppController {
     pub fn is_nwc_connected(self: Pin<&mut Self>) -> bool {
         let result = std::thread::spawn(move || {
             TOKIO_RUNTIME.block_on(async {
-                let nwc = NWC_MANAGER.lock().await;
+                let nwc = GLOBAL_NWC_MANAGER.lock().await;
                 nwc.is_connected()
             })
         }).join();

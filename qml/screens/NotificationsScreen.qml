@@ -114,6 +114,10 @@ Rectangle {
                     text: "↻ Refresh"
                     font.pixelSize: 14
                     
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Refresh notifications"
+                    ToolTip.delay: 500
+                    
                     background: Rectangle {
                         color: parent.pressed ? "#333333" : "#1a1a1a"
                         radius: 8
@@ -136,6 +140,10 @@ Rectangle {
                 Button {
                     text: "✓ Mark all read"
                     font.pixelSize: 14
+                    
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Mark all notifications as read"
+                    ToolTip.delay: 500
                     
                     background: Rectangle {
                         color: parent.pressed ? "#333333" : "#1a1a1a"

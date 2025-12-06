@@ -262,41 +262,60 @@ impl NwcManager {
         client.send_event(&event).await
             .map_err(|e| format!("Failed to send NWC request: {}", e))?;
         
-        // Wait for response (longer timeout for payment)
+        tracing::info!("NWC pay_invoice request sent, waiting for response...");
+        
+        // Wait for response with retries (payment can take time to process)
         let filter = Filter::new()
             .kind(Kind::WalletConnectResponse)
             .author(connection.wallet_pubkey.clone())
             .custom_tag(SingleLetterTag::lowercase(Alphabet::E), event_id.to_hex())
             .limit(1);
         
-        let events = client.fetch_events(filter, std::time::Duration::from_secs(60)).await
-            .map_err(|e| format!("Failed to fetch NWC response: {}", e))?;
-        
-        if let Some(response_event) = events.into_iter().next() {
-            // Decrypt and parse response
-            let decrypted = nip04::decrypt(
-                keys.secret_key(),
-                &response_event.pubkey,
-                &response_event.content
-            ).map_err(|e| format!("Failed to decrypt NWC response: {}", e))?;
-            
-            let response: serde_json::Value = serde_json::from_str(&decrypted)
-                .map_err(|e| format!("Failed to parse NWC response: {}", e))?;
-            
-            if let Some(result) = response.get("result") {
-                if let Some(preimage) = result.get("preimage").and_then(|p| p.as_str()) {
-                    // Refresh balance after payment
-                    let _ = self.fetch_balance().await;
-                    return Ok(preimage.to_string());
-                }
+        // Retry fetching the response multiple times with delays
+        // This handles the case where the wallet needs time to process
+        let max_attempts = 12; // 12 attempts * 5 seconds = 60 seconds total
+        for attempt in 1..=max_attempts {
+            // Small delay before each fetch to give wallet time to respond
+            if attempt > 1 {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
             
-            if let Some(error) = response.get("error") {
-                return Err(format!("Payment failed: {:?}", error));
+            tracing::debug!("NWC response fetch attempt {}/{}", attempt, max_attempts);
+            
+            let events = client.fetch_events(filter.clone(), std::time::Duration::from_secs(10)).await
+                .map_err(|e| format!("Failed to fetch NWC response: {}", e))?;
+            
+            if let Some(response_event) = events.into_iter().next() {
+                // Decrypt and parse response
+                let decrypted = nip04::decrypt(
+                    keys.secret_key(),
+                    &response_event.pubkey,
+                    &response_event.content
+                ).map_err(|e| format!("Failed to decrypt NWC response: {}", e))?;
+                
+                tracing::debug!("NWC response decrypted: {}", &decrypted[..100.min(decrypted.len())]);
+                
+                let response: serde_json::Value = serde_json::from_str(&decrypted)
+                    .map_err(|e| format!("Failed to parse NWC response: {}", e))?;
+                
+                if let Some(result) = response.get("result") {
+                    if let Some(preimage) = result.get("preimage").and_then(|p| p.as_str()) {
+                        tracing::info!("NWC payment successful, preimage received");
+                        // Refresh balance after payment
+                        let _ = self.fetch_balance().await;
+                        return Ok(preimage.to_string());
+                    }
+                }
+                
+                if let Some(error) = response.get("error") {
+                    return Err(format!("Payment failed: {:?}", error));
+                }
             }
         }
         
-        Err("No response from NWC".to_string())
+        // If we got here, the payment might have succeeded but we didn't get the response
+        // This is better than saying "failed" when the payment actually went through
+        Err("NWC response timeout - payment may have succeeded, please check your wallet".to_string())
     }
     
     /// Create an invoice

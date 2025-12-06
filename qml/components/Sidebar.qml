@@ -23,17 +23,13 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 12
             
-            Rectangle {
+            Image {
                 Layout.preferredWidth: 40
                 Layout.preferredHeight: 40
-                radius: 8
-                color: "#9333ea"
-                
-                Text {
-                    anchors.centerIn: parent
-                    text: "⚡"
-                    font.pixelSize: 20
-                }
+                source: "qrc:/icons/icons/icon-256.png"
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
             }
             
             Text {
@@ -64,7 +60,12 @@ Rectangle {
                 radius: 8
                 color: currentScreen === modelData.screen ? "#9333ea" : "transparent"
                 
+                ToolTip.visible: navMouseArea.containsMouse && navMouseArea.pressedButtons === 0
+                ToolTip.text: modelData.label + " (Ctrl+" + (index + 1) + ")"
+                ToolTip.delay: 800
+                
                 MouseArea {
+                    id: navMouseArea
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
@@ -139,7 +140,20 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 60
             radius: 8
-            color: "#1a1a1a"
+            color: profileMouseArea.containsMouse ? "#252525" : "#1a1a1a"
+            
+            MouseArea {
+                id: profileMouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                
+                onClicked: root.navigate("profile")
+            }
+            
+            ToolTip.visible: profileMouseArea.containsMouse
+            ToolTip.text: "View your profile"
+            ToolTip.delay: 800
             
             RowLayout {
                 anchors.fill: parent
@@ -152,18 +166,28 @@ Rectangle {
                     Layout.preferredHeight: 44
                     radius: 22
                     color: "#9333ea"
+                    clip: true
                     
                     Image {
                         anchors.fill: parent
                         source: profilePicture
                         visible: profilePicture !== ""
                         fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        
+                        // Rounded clipping
                         layer.enabled: true
+                        layer.effect: Item {
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 22
+                            }
+                        }
                     }
                     
                     Text {
                         anchors.centerIn: parent
-                        text: displayName.charAt(0).toUpperCase()
+                        text: displayName ? displayName.charAt(0).toUpperCase() : "?"
                         color: "#ffffff"
                         font.pixelSize: 18
                         font.weight: Font.Bold
@@ -171,12 +195,25 @@ Rectangle {
                     }
                 }
                 
-                Text {
-                    text: displayName || "Anonymous"
-                    color: "#ffffff"
-                    font.pixelSize: 14
+                ColumnLayout {
                     Layout.fillWidth: true
-                    elide: Text.ElideRight
+                    spacing: 2
+                    
+                    Text {
+                        text: displayName || "Anonymous"
+                        color: "#ffffff"
+                        font.pixelSize: 14
+                        font.weight: Font.Medium
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                    
+                    Text {
+                        text: "View profile"
+                        color: "#888888"
+                        font.pixelSize: 11
+                        visible: displayName !== ""
+                    }
                 }
             }
         }

@@ -463,6 +463,109 @@ impl RelayManager {
         Ok(combined)
     }
     
+    /// Fetch reactions and zaps for specific note IDs
+    /// Returns a map of note_id -> (reactions_map, zap_total, zap_count)
+    /// where reactions_map is emoji -> count
+    pub async fn fetch_note_stats(&self, note_ids: &[EventId]) -> Result<std::collections::HashMap<String, (std::collections::HashMap<String, u32>, u64, u32)>, String> {
+        if note_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        
+        // Fetch reactions (kind 7) for these notes
+        let reaction_filter = Filter::new()
+            .kind(Kind::Reaction)
+            .events(note_ids.to_vec())
+            .limit(500);
+        
+        // Fetch zap receipts (kind 9735) for these notes
+        let zap_filter = Filter::new()
+            .kind(Kind::ZapReceipt)
+            .events(note_ids.to_vec())
+            .limit(200);
+        
+        let (reactions_result, zaps_result) = tokio::join!(
+            self.client.fetch_events(reaction_filter, DEFAULT_TIMEOUT),
+            self.client.fetch_events(zap_filter, DEFAULT_TIMEOUT)
+        );
+        
+        let mut stats: std::collections::HashMap<String, (std::collections::HashMap<String, u32>, u64, u32)> = std::collections::HashMap::new();
+        
+        // Initialize stats for all requested note IDs
+        for note_id in note_ids {
+            stats.insert(note_id.to_hex(), (std::collections::HashMap::new(), 0, 0));
+        }
+        
+        // Process reactions
+        if let Ok(reactions) = reactions_result {
+            for event in reactions.iter() {
+                // Find which note this reaction is for
+                for tag in event.tags.iter() {
+                    if let Some(TagStandard::Event { event_id, .. }) = tag.as_standardized() {
+                        let note_id_hex = event_id.to_hex();
+                        if let Some((reactions_map, _, _)) = stats.get_mut(&note_id_hex) {
+                            // The emoji is in the content - if empty or "+", use "❤️"
+                            let emoji = if event.content.is_empty() || event.content == "+" {
+                                "❤️".to_string()
+                            } else if event.content == "-" {
+                                "👎".to_string()
+                            } else {
+                                // Take first grapheme cluster (emoji) or first few chars
+                                let content = event.content.trim();
+                                // Get first emoji or character (handle multi-byte)
+                                content.chars().take(2).collect::<String>()
+                            };
+                            *reactions_map.entry(emoji).or_insert(0) += 1;
+                        }
+                        break; // Only count once per event
+                    }
+                }
+            }
+        }
+        
+        // Process zaps
+        if let Ok(zaps) = zaps_result {
+            for event in zaps.iter() {
+                // Find which note this zap is for and extract amount
+                let mut target_note: Option<String> = None;
+                let mut amount_msats: u64 = 0;
+                
+                for tag in event.tags.iter() {
+                    match tag.as_standardized() {
+                        Some(TagStandard::Event { event_id, .. }) => {
+                            target_note = Some(event_id.to_hex());
+                        }
+                        Some(TagStandard::Bolt11(invoice)) => {
+                            // Try to extract amount from bolt11 invoice
+                            // The amount is in the invoice string after "lnbc" or "lntb"
+                            if let Some(amount) = extract_bolt11_amount(&invoice.to_string()) {
+                                amount_msats = amount;
+                            }
+                        }
+                        _ => {}
+                    }
+                    
+                    // Also check for "amount" tag (some implementations use this)
+                    if tag.kind() == TagKind::Amount {
+                        if let Some(amount_str) = tag.content() {
+                            if let Ok(amt) = amount_str.parse::<u64>() {
+                                amount_msats = amt;
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(note_id_hex) = target_note {
+                    if let Some((_, zap_total, zap_count)) = stats.get_mut(&note_id_hex) {
+                        *zap_total += amount_msats / 1000; // Convert msats to sats
+                        *zap_count += 1;
+                    }
+                }
+            }
+        }
+        
+        Ok(stats)
+    }
+    
     /// Subscribe to new events (real-time updates)
     pub async fn subscribe_feed(&self, following: &[PublicKey]) -> Result<(), String> {
         // Build filter for text notes from following
@@ -535,4 +638,61 @@ pub type SharedRelayManager = Arc<RwLock<Option<RelayManager>>>;
 /// Create a shared relay manager instance
 pub fn create_shared_relay_manager() -> SharedRelayManager {
     Arc::new(RwLock::new(None))
+}
+
+/// Extract amount in millisatoshis from a BOLT11 invoice string
+fn extract_bolt11_amount(invoice: &str) -> Option<u64> {
+    // BOLT11 format: ln[tb|bc][amount][multiplier][rest]
+    // Amount is optional and followed by multiplier: m (milli), u (micro), n (nano), p (pico)
+    let invoice_lower = invoice.to_lowercase();
+    
+    // Find the prefix end (lnbc or lntb)
+    let start = if invoice_lower.starts_with("lnbc") {
+        4
+    } else if invoice_lower.starts_with("lntb") {
+        4
+    } else if invoice_lower.starts_with("lnbcrt") {
+        6
+    } else {
+        return None;
+    };
+    
+    // Extract the amount portion (digits followed by optional multiplier)
+    let rest = &invoice_lower[start..];
+    let mut amount_str = String::new();
+    let mut multiplier: Option<char> = None;
+    
+    for c in rest.chars() {
+        if c.is_ascii_digit() {
+            amount_str.push(c);
+        } else if matches!(c, 'm' | 'u' | 'n' | 'p') && !amount_str.is_empty() {
+            multiplier = Some(c);
+            break;
+        } else {
+            break;
+        }
+    }
+    
+    if amount_str.is_empty() {
+        return None;
+    }
+    
+    let base_amount: u64 = amount_str.parse().ok()?;
+    
+    // Convert to millisatoshis based on multiplier
+    // In BOLT11: amount is in BTC, so:
+    // m = milli-BTC = 100,000 sats = 100,000,000 msats
+    // u = micro-BTC = 100 sats = 100,000 msats  
+    // n = nano-BTC = 0.1 sats = 100 msats
+    // p = pico-BTC = 0.0001 sats = 0.1 msats
+    let msats = match multiplier {
+        Some('m') => base_amount * 100_000_000,
+        Some('u') => base_amount * 100_000,
+        Some('n') => base_amount * 100,
+        Some('p') => base_amount / 10,
+        None => base_amount * 100_000_000_000, // No multiplier means BTC
+        _ => return None, // Unknown multiplier
+    };
+    
+    Some(msats)
 }

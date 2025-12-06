@@ -79,6 +79,10 @@ Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 44
                             
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Sign out of your account"
+                            ToolTip.delay: 500
+                            
                             background: Rectangle {
                                 color: parent.pressed ? "#7f1d1d" : "#991b1b"
                                 radius: 8
@@ -223,6 +227,10 @@ Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 44
                                 
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Connect your Nostr Wallet Connect (NWC) for zapping"
+                                ToolTip.delay: 500
+                                
                                 background: Rectangle {
                                     color: parent.pressed ? "#7c22ce" : "#9333ea"
                                     radius: 8
@@ -254,6 +262,10 @@ Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 44
                             visible: root.appController && root.appController.nwc_connected
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Disconnect your wallet"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: parent.pressed ? "#b91c1c" : "#dc2626"
@@ -376,6 +388,10 @@ Rectangle {
                                 implicitWidth: 70
                                 implicitHeight: 40
                                 
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Save media server URL"
+                                ToolTip.delay: 500
+                                
                                 background: Rectangle {
                                     color: parent.pressed ? "#7c22ce" : "#9333ea"
                                     radius: 8
@@ -407,6 +423,10 @@ Rectangle {
                             text: "Reset to Default"
                             Layout.fillWidth: true
                             Layout.preferredHeight: 36
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Reset to default Blossom server"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: parent.pressed ? "#333333" : "#252525"
@@ -547,6 +567,10 @@ Rectangle {
                                 implicitWidth: 70
                                 implicitHeight: 40
                                 
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Add relay to your list"
+                                ToolTip.delay: 500
+                                
                                 background: Rectangle {
                                     color: parent.enabled ? (parent.pressed ? "#7c22ce" : "#9333ea") : "#333333"
                                     radius: 8
@@ -584,6 +608,10 @@ Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 40
                             Layout.topMargin: 8
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Reset to default relay list"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: parent.pressed ? "#333333" : "#252525"

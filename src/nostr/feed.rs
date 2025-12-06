@@ -51,6 +51,8 @@ pub struct DisplayNote {
     pub reposts: u32,
     pub replies: u32,
     pub zap_amount: u64,
+    pub zap_count: u32,  // Number of zaps received
+    pub reactions: std::collections::HashMap<String, u32>,  // emoji -> count
     pub images: Vec<String>,
     pub videos: Vec<String>,
     pub is_reply: bool,
@@ -126,6 +128,8 @@ impl DisplayNote {
             reposts: 0,
             replies: 0,
             zap_amount: 0,
+            zap_count: 0,
+            reactions: std::collections::HashMap::new(),
             images,
             videos,
             is_reply,
@@ -150,6 +154,8 @@ impl DisplayNote {
             "reposts": self.reposts,
             "replies": self.replies,
             "zapAmount": self.zap_amount,
+            "zapCount": self.zap_count,
+            "reactions": self.reactions,
             "images": self.images,
             "videos": self.videos,
             "isReply": self.is_reply,

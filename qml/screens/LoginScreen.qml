@@ -49,20 +49,14 @@ Rectangle {
                     spacing: 24
                     
                     // Logo
-                    Rectangle {
-                        Layout.preferredWidth: 100
-                        Layout.preferredHeight: 100
+                    Image {
+                        Layout.preferredWidth: 120
+                        Layout.preferredHeight: 120
                         Layout.alignment: Qt.AlignHCenter
-                        color: "#1a1a1a"
-                        radius: 50
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "P"
-                            color: "#9333ea"
-                            font.pixelSize: 48
-                            font.weight: Font.Bold
-                        }
+                        source: "qrc:/icons/icons/icon-256.png"
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
                     }
                     
                     // Title
@@ -178,6 +172,10 @@ Rectangle {
                             Layout.preferredHeight: 50
                             enabled: !root.isLoading && unlockPasswordInput.text.trim() !== ""
                             
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Unlock your account with your password"
+                            ToolTip.delay: 500
+                            
                             background: Rectangle {
                                 color: unlockButton.enabled ? (unlockButton.pressed ? "#7c22ce" : (unlockButton.hovered ? "#a855f7" : "#9333ea")) : "#1a1a1a"
                                 radius: 10
@@ -229,6 +227,10 @@ Rectangle {
                             Layout.preferredHeight: 56
                             enabled: !root.isLoading
                             
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Create a new Nostr identity"
+                            ToolTip.delay: 500
+                            
                             background: Rectangle {
                                 color: createAccountBtn.pressed ? "#7c22ce" : (createAccountBtn.hovered ? "#a855f7" : "#9333ea")
                                 radius: 12
@@ -269,6 +271,10 @@ Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 50
                             enabled: !root.isLoading
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Import an existing Nostr account using your nsec"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: importAccountBtn.pressed ? "#2a2a2a" : (importAccountBtn.hovered ? "#333333" : "#1a1a1a")
@@ -327,6 +333,10 @@ Rectangle {
                             Button {
                                 text: "← Back"
                                 font.pixelSize: 14
+                                
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Go back to main screen"
+                                ToolTip.delay: 500
                                 
                                 background: Rectangle {
                                     color: parent.pressed ? "#2a2a2a" : (parent.hovered ? "#1a1a1a" : "transparent")
@@ -407,6 +417,10 @@ Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 50
                                 enabled: !root.isLoading
+                                
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Generate a new cryptographic key pair"
+                                ToolTip.delay: 500
                                 
                                 background: Rectangle {
                                     color: generateBtn.pressed ? "#7c22ce" : (generateBtn.hovered ? "#a855f7" : "#9333ea")
@@ -502,6 +516,10 @@ Rectangle {
                                             text: "Copy"
                                             font.pixelSize: 12
                                             
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Copy public key to clipboard"
+                                            ToolTip.delay: 500
+                                            
                                             background: Rectangle {
                                                 color: parent.pressed ? "#333333" : (parent.hovered ? "#2a2a2a" : "#222222")
                                                 radius: 4
@@ -568,6 +586,10 @@ Rectangle {
                                             text: nsecDisplay.nsecVisible ? "Hide" : "Show"
                                             font.pixelSize: 11
                                             
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: nsecDisplay.nsecVisible ? "Hide private key" : "Show private key"
+                                            ToolTip.delay: 500
+                                            
                                             background: Rectangle {
                                                 color: parent.pressed ? "#333333" : (parent.hovered ? "#2a2a2a" : "#222222")
                                                 radius: 4
@@ -588,6 +610,10 @@ Rectangle {
                                             Layout.preferredHeight: 28
                                             text: "Copy"
                                             font.pixelSize: 11
+                                            
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Copy private key to clipboard (be careful!)"
+                                            ToolTip.delay: 500
                                             
                                             background: Rectangle {
                                                 color: parent.pressed ? "#333333" : (parent.hovered ? "#2a2a2a" : "#222222")
@@ -660,6 +686,10 @@ Rectangle {
                                 Layout.preferredHeight: 50
                                 enabled: savedKeyCheckbox.checked && !root.isLoading
                                 
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Continue with your new account"
+                                ToolTip.delay: 500
+                                
                                 background: Rectangle {
                                     color: continueBtn.enabled ? (continueBtn.pressed ? "#166534" : (continueBtn.hovered ? "#22c55e" : "#16a34a")) : "#1a1a1a"
                                     radius: 10
@@ -691,6 +721,10 @@ Rectangle {
                             Button {
                                 text: "← Back"
                                 font.pixelSize: 14
+                                
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Go back to main screen"
+                                ToolTip.delay: 500
                                 
                                 background: Rectangle {
                                     color: parent.pressed ? "#2a2a2a" : (parent.hovered ? "#1a1a1a" : "transparent")
@@ -899,6 +933,10 @@ Rectangle {
                                 return true
                             }
                             
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Log in with your private key"
+                            ToolTip.delay: 500
+                            
                             background: Rectangle {
                                 color: loginButton.enabled ? (loginButton.pressed ? "#7c22ce" : (loginButton.hovered ? "#a855f7" : "#9333ea")) : "#1a1a1a"
                                 radius: 10
@@ -961,6 +999,10 @@ Rectangle {
                             Button {
                                 text: "← Back"
                                 font.pixelSize: 14
+                                
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Go back to main screen"
+                                ToolTip.delay: 500
                                 
                                 background: Rectangle {
                                     color: parent.pressed ? "#2a2a2a" : (parent.hovered ? "#1a1a1a" : "transparent")

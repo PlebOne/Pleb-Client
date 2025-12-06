@@ -22,6 +22,8 @@ Rectangle {
     property int reposts: 0
     property int replies: 0
     property int zapAmount: 0
+    property int zapCount: 0  // Number of zaps
+    property var reactions: ({})  // Emoji -> count map
     property var images: []
     property var videos: []
     property bool isReply: false
@@ -31,11 +33,101 @@ Rectangle {
     property string repostAuthorPicture: ""
     property var feedController: null  // For embedded content fetching
     
+    // Track if stats have been loaded
+    property bool statsLoaded: false
+    // Track if stats fetch is in progress
+    property bool statsLoading: false
+    
     signal likeClicked()
     signal repostClicked()
     signal replyClicked()
     signal zapClicked()
     signal noteClicked(string noteId)
+    
+    // Async stats fetching - non-blocking
+    onNoteIdChanged: {
+        if (noteId && feedController && visible && !statsLoaded && !statsLoading) {
+            fetchStatsTimer.restart()
+        }
+    }
+    
+    onVisibleChanged: {
+        if (visible && noteId && feedController && !statsLoaded && !statsLoading) {
+            fetchStatsTimer.restart()
+        }
+    }
+    
+    // Timer to debounce stats fetching (prevents fetching while rapidly scrolling)
+    Timer {
+        id: fetchStatsTimer
+        interval: 300  // Wait 300ms after note becomes visible
+        repeat: false
+        onTriggered: {
+            if (root.noteId && root.feedController && !root.statsLoaded) {
+                root.statsLoading = true
+                var result = root.feedController.fetch_note_stats(root.noteId)
+                try {
+                    var stats = JSON.parse(result)
+                    if (stats.loading) {
+                        // Data is being fetched, start polling
+                        statsPollTimer.start()
+                    } else {
+                        // Data was cached, apply immediately
+                        applyStats(stats)
+                    }
+                } catch (e) {
+                    root.statsLoading = false
+                }
+            }
+        }
+    }
+    
+    // Poll timer for checking async stats results
+    Timer {
+        id: statsPollTimer
+        interval: 200  // Check every 200ms
+        repeat: true
+        property int pollCount: 0
+        onTriggered: {
+            pollCount++
+            if (pollCount > 25) {  // Give up after 5 seconds
+                stop()
+                pollCount = 0
+                root.statsLoading = false
+                return
+            }
+            
+            if (root.noteId && root.feedController) {
+                var result = root.feedController.get_cached_note_stats(root.noteId)
+                try {
+                    var stats = JSON.parse(result)
+                    if (!stats.loading) {
+                        // Data is ready
+                        stop()
+                        pollCount = 0
+                        applyStats(stats)
+                    }
+                } catch (e) {
+                    // Continue polling
+                }
+            }
+        }
+    }
+    
+    // Apply fetched stats to the note card
+    function applyStats(stats) {
+        if (stats.reactions && Object.keys(stats.reactions).length > 0) {
+            root.reactions = stats.reactions
+        }
+        if (stats.zapAmount !== undefined) {
+            root.zapAmount = stats.zapAmount
+        }
+        if (stats.zapCount !== undefined) {
+            root.zapCount = stats.zapCount
+        }
+        root.statsLoaded = true
+        root.statsLoading = false
+    }
     
     // Main click area for opening thread
     MouseArea {
@@ -278,6 +370,52 @@ Rectangle {
             }
         }
         
+        // Reactions display (show emoji counts above action bar)
+        Flow {
+            Layout.fillWidth: true
+            spacing: 6
+            visible: Object.keys(root.reactions).length > 0
+            
+            Repeater {
+                model: Object.keys(root.reactions)
+                
+                delegate: Rectangle {
+                    width: reactionContent.implicitWidth + 12
+                    height: 24
+                    radius: 12
+                    color: "#2a2a2a"
+                    
+                    RowLayout {
+                        id: reactionContent
+                        anchors.centerIn: parent
+                        spacing: 4
+                        
+                        Text {
+                            text: modelData
+                            font.pixelSize: 12
+                        }
+                        
+                        Text {
+                            text: root.reactions[modelData] || 0
+                            color: "#888888"
+                            font.pixelSize: 11
+                        }
+                    }
+                    
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            // React with the same emoji
+                            reactionPicker.noteId = root.noteId
+                            reactionPicker.reactions = root.reactions
+                            reactionPicker.open()
+                        }
+                    }
+                }
+            }
+        }
+        
         // Action bar
         RowLayout {
             Layout.fillWidth: true
@@ -287,6 +425,7 @@ Rectangle {
             ActionButton {
                 icon: "💬"
                 count: replies
+                tooltipText: "Reply to this note"
                 onClicked: root.replyClicked()
             }
             
@@ -294,26 +433,59 @@ Rectangle {
             ActionButton {
                 icon: "🔄"
                 count: reposts
+                tooltipText: "Repost this note"
                 onClicked: root.repostClicked()
             }
             
-            // Like
+            // Like/React (opens reaction picker)
             ActionButton {
+                id: likeButton
                 icon: "❤️"
-                count: likes
-                onClicked: root.likeClicked()
+                count: getTotalReactions()
+                tooltipText: "React with emoji"
+                onClicked: {
+                    reactionPicker.noteId = root.noteId
+                    reactionPicker.reactions = root.reactions
+                    reactionPicker.open()
+                }
+                
+                function getTotalReactions() {
+                    var total = 0
+                    var keys = Object.keys(root.reactions)
+                    for (var i = 0; i < keys.length; i++) {
+                        total += root.reactions[keys[i]] || 0
+                    }
+                    return total > 0 ? total : root.likes
+                }
             }
             
-            // Zap
-            ActionButton {
-                icon: "⚡"
-                count: zapAmount > 0 ? Math.floor(zapAmount / 1000) : 0
-                suffix: zapAmount > 0 ? "k" : ""
-                highlight: true
+            // Zap - show total sats and count
+            ZapButton {
+                zapAmount: root.zapAmount
+                zapCount: root.zapCount
                 onClicked: root.zapClicked()
             }
             
             Item { Layout.fillWidth: true }
+        }
+    }
+    
+    // Reaction picker popup
+    ReactionPicker {
+        id: reactionPicker
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        feedController: root.feedController
+        
+        onReactionSelected: function(emoji) {
+            if (root.feedController && root.noteId) {
+                root.feedController.react_to_note(root.noteId, emoji)
+                // Optimistically update the local reactions
+                var newReactions = Object.assign({}, root.reactions)
+                newReactions[emoji] = (newReactions[emoji] || 0) + 1
+                root.reactions = newReactions
+            }
         }
     }
     
@@ -428,15 +600,31 @@ Rectangle {
         return [...new Set(urls)].slice(0, 2)
     }
     
+    // Format sats amount nicely (e.g., 1234 -> "1.2k", 1234567 -> "1.2M")
+    function formatSats(amount) {
+        if (amount >= 1000000) {
+            return (amount / 1000000).toFixed(1) + "M"
+        } else if (amount >= 1000) {
+            return (amount / 1000).toFixed(1) + "k"
+        }
+        return amount.toString()
+    }
+    
     component ActionButton: MouseArea {
         property string icon: ""
         property int count: 0
         property string suffix: ""
         property bool highlight: false
+        property string tooltipText: ""
         
         width: row.width
         height: row.height
         cursorShape: Qt.PointingHandCursor
+        hoverEnabled: true
+        
+        ToolTip.visible: containsMouse && tooltipText !== ""
+        ToolTip.text: tooltipText
+        ToolTip.delay: 500
         
         RowLayout {
             id: row
@@ -453,5 +641,49 @@ Rectangle {
                 font.pixelSize: 13
             }
         }
+    }
+    
+    // Zap button with amount and count display
+    component ZapButton: MouseArea {
+        property int zapAmount: 0
+        property int zapCount: 0
+        
+        width: zapRow.width
+        height: zapRow.height
+        cursorShape: Qt.PointingHandCursor
+        
+        RowLayout {
+            id: zapRow
+            spacing: 6
+            
+            Text {
+                text: "⚡"
+                font.pixelSize: 16
+            }
+            
+            // Sats amount (primary display)
+            Text {
+                text: zapAmount > 0 ? formatSats(zapAmount) : ""
+                color: "#facc15"  // Yellow/gold for sats
+                font.pixelSize: 13
+                font.weight: Font.Medium
+                visible: zapAmount > 0
+            }
+            
+            // Zap count (secondary, smaller)
+            Text {
+                text: zapCount > 1 ? "(" + zapCount + ")" : ""
+                color: "#888888"
+                font.pixelSize: 11
+                visible: zapCount > 1
+            }
+        }
+        
+        // Tooltip showing exact amount or prompt to zap
+        ToolTip.visible: containsMouse
+        ToolTip.text: zapAmount > 0 ? zapAmount.toLocaleString() + " sats from " + zapCount + " zap" + (zapCount !== 1 ? "s" : "") : "Send a zap"
+        ToolTip.delay: 500
+        
+        hoverEnabled: true
     }
 }

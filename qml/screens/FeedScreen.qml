@@ -209,6 +209,10 @@ Rectangle {
                     text: "⬆️ New"
                     font.pixelSize: 14
                     
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Check for new posts"
+                    ToolTip.delay: 500
+                    
                     background: Rectangle {
                         color: parent.pressed ? "#1a5233" : "#1e3a2f"
                         radius: 8
@@ -263,6 +267,10 @@ Rectangle {
                 Button {
                     text: "🔄"
                     font.pixelSize: 18
+                    
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Refresh feed"
+                    ToolTip.delay: 500
                     
                     background: Rectangle {
                         color: parent.pressed ? "#333333" : "#1a1a1a"
@@ -333,6 +341,8 @@ Rectangle {
                             reposts = note.reposts || 0
                             replies = note.replies || 0
                             zapAmount = note.zapAmount || 0
+                            zapCount = note.zapCount || 0
+                            reactions = note.reactions || {}
                             images = note.images || []
                             videos = note.videos || []
                             isReply = note.isReply || false
@@ -361,6 +371,10 @@ Rectangle {
                     videos = []
                     isRepost = false
                     repostAuthorName = ""
+                    zapCount = 0
+                    zapAmount = 0
+                    reactions = {}
+                    // statsLoaded = false  // Disabled - stats fetching causes scroll stutter
                 }
                 
                 ListView.onReused: {
@@ -370,8 +384,19 @@ Rectangle {
                 
                 onLikeClicked: feedController.like_note(noteId)
                 onRepostClicked: feedController.repost_note(noteId)
-                onReplyClicked: root.openThread(noteId) // Open thread to reply
-                onZapClicked: feedController.zap_note(noteId, 21, "") // Default 21 sats zap
+                onReplyClicked: {
+                    // Open compose dialog with reply context
+                    composeDialog.replyToId = noteId
+                    composeDialog.replyToAuthor = authorName || "Anonymous"
+                    composeDialog.replyToContent = content.substring(0, 200) + (content.length > 200 ? "..." : "")
+                    composeDialog.open()
+                }
+                onZapClicked: {
+                    // Open zap dialog with note info
+                    zapDialog.noteId = noteId
+                    zapDialog.authorName = authorName
+                    zapDialog.open()
+                }
                 onNoteClicked: function(id) {
                     console.log("Opening thread for note:", id)
                     root.openThread(id)
@@ -481,350 +506,59 @@ Rectangle {
             }
         }
         
-        // Compose bar with media support
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.minimumHeight: 70
-            Layout.preferredHeight: composeColumn.implicitHeight + 24
-            color: "#111111"
-            
-            // Track attached media URLs
-            property var attachedMedia: []
-            property bool isUploading: false
-            
-            ColumnLayout {
-                id: composeColumn
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
-                
-                // Media preview row (when media is attached)
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    visible: parent.parent.attachedMedia.length > 0
-                    
-                    Repeater {
-                        model: parent.parent.parent.attachedMedia
-                        
-                        delegate: Rectangle {
-                            width: 80
-                            height: 80
-                            radius: 8
-                            color: "#2a2a2a"
-                            clip: true
-                            
-                            Image {
-                                anchors.fill: parent
-                                source: modelData
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                                visible: !modelData.match(/\.(mp4|webm|mov)$/i)
-                            }
-                            
-                            // Video indicator
-                            Rectangle {
-                                anchors.fill: parent
-                                color: "#2a2a2a"
-                                visible: modelData.match(/\.(mp4|webm|mov)$/i)
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "🎬"
-                                    font.pixelSize: 24
-                                }
-                            }
-                            
-                            // Remove button
-                            Rectangle {
-                                anchors.top: parent.top
-                                anchors.right: parent.right
-                                anchors.margins: 4
-                                width: 20
-                                height: 20
-                                radius: 10
-                                color: "#000000"
-                                opacity: 0.7
-                                
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✕"
-                                    color: "#ffffff"
-                                    font.pixelSize: 12
-                                }
-                                
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        var media = composeColumn.parent.attachedMedia.slice()
-                                        media.splice(index, 1)
-                                        composeColumn.parent.attachedMedia = media
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Input row
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    
-                    // Media attach button
-                    Button {
-                        id: attachBtn
-                        text: "📷"
-                        font.pixelSize: 18
-                        implicitWidth: 44
-                        implicitHeight: 44
-                        enabled: !composeColumn.parent.isUploading
-                        
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Attach image or video"
-                        ToolTip.delay: 500
-                        
-                        background: Rectangle {
-                            color: parent.pressed ? "#333333" : (parent.hovered ? "#252525" : "#1a1a1a")
-                            radius: 8
-                            border.color: "#333333"
-                            border.width: 1
-                        }
-                        
-                        onClicked: mediaFileDialog.open()
-                    }
-                    
-                    TextField {
-                        id: composeInput
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 44
-                        placeholderText: "What's on your mind?"
-                        color: "#ffffff"
-                        font.pixelSize: 14
-                        
-                        background: Rectangle {
-                            color: "#1a1a1a"
-                            radius: 8
-                            border.color: composeInput.activeFocus ? "#9333ea" : "#333333"
-                            border.width: 1
-                        }
-                        
-                        leftPadding: 16
-                        rightPadding: 16
-                    }
-                    
-                    // Upload progress indicator
-                    BusyIndicator {
-                        running: composeColumn.parent.isUploading
-                        visible: running
-                        implicitWidth: 32
-                        implicitHeight: 32
-                    }
-                    
-                    Button {
-                        text: "Post"
-                        Layout.preferredHeight: 44
-                        Layout.preferredWidth: 80
-                        font.pixelSize: 14
-                        font.weight: Font.Medium
-                        
-                        background: Rectangle {
-                            color: parent.enabled ? (parent.pressed ? "#7c22ce" : "#9333ea") : "#333333"
-                            radius: 8
-                        }
-                        
-                        contentItem: Text {
-                            text: parent.text
-                            color: "#ffffff"
-                            font: parent.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        
-                        enabled: (composeInput.text.trim() !== "" || composeColumn.parent.attachedMedia.length > 0) && !composeColumn.parent.isUploading
-                        
-                        onClicked: {
-                            if (feedController) {
-                                var media = composeColumn.parent.attachedMedia
-                                if (media.length > 0) {
-                                    feedController.post_note_with_media(
-                                        composeInput.text.trim(),
-                                        JSON.stringify(media)
-                                    )
-                                } else {
-                                    feedController.post_note(composeInput.text.trim())
-                                }
-                                composeInput.text = ""
-                                composeColumn.parent.attachedMedia = []
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
     
-    // File dialog for media selection
-    Loader {
-        id: mediaFileDialogLoader
-        active: false
-        sourceComponent: Item {}
-    }
-    
-    // Platform file dialog (we'll use a custom solution)
-    Item {
-        id: mediaFileDialog
+    // Floating New Post button
+    Button {
+        id: newPostButton
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: 24
+        anchors.bottomMargin: 24
+        width: 56
+        height: 56
         
-        function open() {
-            // Use Qt.labs.platform FileDialog if available, otherwise fall back
-            fileDialogComponent.createObject(root).open()
-        }
+        ToolTip.visible: hovered
+        ToolTip.text: "New Post"
+        ToolTip.delay: 500
         
-        Component {
-            id: fileDialogComponent
+        background: Rectangle {
+            color: parent.pressed ? "#7c22ce" : (parent.hovered ? "#a855f7" : "#9333ea")
+            radius: 28
             
-            Popup {
-                id: fileSelectPopup
-                anchors.centerIn: parent
-                width: 500
-                height: 400
-                modal: true
-                focus: true
-                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                
-                background: Rectangle {
-                    color: "#1a1a1a"
-                    radius: 12
-                    border.color: "#333333"
-                    border.width: 1
-                }
-                
-                ColumnLayout {
+            // Shadow
+            layer.enabled: true
+            layer.effect: Item {
+                Rectangle {
                     anchors.fill: parent
-                    anchors.margins: 16
-                    spacing: 12
-                    
-                    Text {
-                        text: "Enter file path"
-                        color: "#ffffff"
-                        font.pixelSize: 16
-                        font.weight: Font.Bold
-                    }
-                    
-                    Text {
-                        text: "Supported: JPG, PNG, GIF, WebP, MP4, WebM, MOV"
-                        color: "#888888"
-                        font.pixelSize: 12
-                    }
-                    
-                    TextField {
-                        id: filePathInput
-                        Layout.fillWidth: true
-                        placeholderText: "/home/user/image.jpg"
-                        color: "#ffffff"
-                        font.pixelSize: 14
-                        
-                        background: Rectangle {
-                            color: "#0a0a0a"
-                            radius: 8
-                            border.color: filePathInput.activeFocus ? "#9333ea" : "#333333"
-                            border.width: 1
-                        }
-                        
-                        leftPadding: 12
-                        rightPadding: 12
-                        topPadding: 12
-                        bottomPadding: 12
-                    }
-                    
-                    Text {
-                        id: uploadStatus
-                        color: "#888888"
-                        font.pixelSize: 12
-                        visible: text !== ""
-                    }
-                    
-                    Item { Layout.fillHeight: true }
-                    
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        
-                        Item { Layout.fillWidth: true }
-                        
-                        Button {
-                            text: "Cancel"
-                            implicitWidth: 100
-                            implicitHeight: 40
-                            
-                            background: Rectangle {
-                                color: parent.pressed ? "#333333" : "#252525"
-                                radius: 8
-                            }
-                            
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#ffffff"
-                                font.pixelSize: 14
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            
-                            onClicked: fileSelectPopup.close()
-                        }
-                        
-                        Button {
-                            text: composeColumn.parent.isUploading ? "Uploading..." : "Upload"
-                            implicitWidth: 100
-                            implicitHeight: 40
-                            enabled: filePathInput.text.trim() !== "" && !composeColumn.parent.isUploading
-                            
-                            background: Rectangle {
-                                color: parent.enabled ? (parent.pressed ? "#7c22ce" : "#9333ea") : "#333333"
-                                radius: 8
-                            }
-                            
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#ffffff"
-                                font.pixelSize: 14
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            
-                            onClicked: {
-                                var path = filePathInput.text.trim()
-                                if (path && feedController) {
-                                    composeColumn.parent.isUploading = true
-                                    uploadStatus.text = "Uploading..."
-                                    uploadStatus.color = "#888888"
-                                    
-                                    var result = feedController.upload_media(path)
-                                    try {
-                                        var data = JSON.parse(result)
-                                        if (data.url) {
-                                            // Success - add to attached media
-                                            var media = composeColumn.parent.attachedMedia.slice()
-                                            media.push(data.url)
-                                            composeColumn.parent.attachedMedia = media
-                                            fileSelectPopup.close()
-                                        } else if (data.error) {
-                                            uploadStatus.text = "Error: " + data.error
-                                            uploadStatus.color = "#ff6b6b"
-                                        }
-                                    } catch (e) {
-                                        uploadStatus.text = "Upload failed"
-                                        uploadStatus.color = "#ff6b6b"
-                                    }
-                                    composeColumn.parent.isUploading = false
-                                }
-                            }
-                        }
-                    }
+                    anchors.margins: -4
+                    radius: 32
+                    color: "#20000000"
+                    z: -1
                 }
             }
         }
+        
+        contentItem: Text {
+            text: "✏️"
+            font.pixelSize: 24
+            color: "#ffffff"
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        
+        onClicked: {
+            composeDialog.replyToId = ""
+            composeDialog.replyToAuthor = ""
+            composeDialog.replyToContent = ""
+            composeDialog.open()
+        }
+    }
+    
+    // Compose Dialog for new posts and replies
+    ComposeDialog {
+        id: composeDialog
+        feedController: root.feedController
     }
     
     // Keyboard Shortcuts Popup
@@ -944,6 +678,94 @@ Rectangle {
                 ShortcutRow { key: "1"; desc: "Following feed" }
                 ShortcutRow { key: "2"; desc: "Replies feed" }
                 ShortcutRow { key: "3"; desc: "Global feed (if enabled)" }
+            }
+        }
+    }
+    
+    // Zap Dialog
+    ZapDialog {
+        id: zapDialog
+        feedController: root.feedController
+        nwcConnected: appController ? appController.nwc_connected : false
+        
+        onZapSent: function(noteId, amount, comment) {
+            console.log("Zap sent:", amount, "sats to", noteId)
+        }
+    }
+    
+    // Handle zap results
+    Connections {
+        target: feedController
+        
+        function onZap_success(noteId, amount) {
+            console.log("Zap successful:", amount, "sats to", noteId)
+            // Could show a toast notification here
+        }
+        
+        function onZap_failed(noteId, error) {
+            console.log("Zap failed:", error)
+            // Show error dialog
+            errorDialog.text = error
+            errorDialog.open()
+        }
+    }
+    
+    // Error dialog for zap failures
+    Popup {
+        id: errorDialog
+        property string text: ""
+        
+        modal: true
+        dim: true
+        anchors.centerIn: Overlay.overlay
+        width: 320
+        height: errorContent.implicitHeight + 48
+        padding: 24
+        
+        background: Rectangle {
+            color: "#1a1a1a"
+            radius: 12
+            border.color: "#ff4444"
+            border.width: 1
+        }
+        
+        ColumnLayout {
+            id: errorContent
+            anchors.fill: parent
+            spacing: 16
+            
+            Text {
+                text: "⚠️ Zap Failed"
+                color: "#ff6666"
+                font.pixelSize: 16
+                font.weight: Font.Bold
+            }
+            
+            Text {
+                Layout.fillWidth: true
+                text: errorDialog.text
+                color: "#cccccc"
+                font.pixelSize: 14
+                wrapMode: Text.Wrap
+            }
+            
+            Button {
+                Layout.fillWidth: true
+                text: "OK"
+                
+                background: Rectangle {
+                    color: parent.pressed ? "#333333" : "#2a2a2a"
+                    radius: 8
+                }
+                
+                contentItem: Text {
+                    text: parent.text
+                    color: "#ffffff"
+                    font.pixelSize: 14
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                
+                onClicked: errorDialog.close()
             }
         }
     }

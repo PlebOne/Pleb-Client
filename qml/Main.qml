@@ -15,6 +15,9 @@ ApplicationWindow {
     minimumHeight: 600
     title: "Pleb Client"
     
+    // Application icon (shows in taskbar)
+    // Note: Window icon requires the icon to be accessible via qrc
+    
     color: "#0a0a0a"
     
     // System tray settings
@@ -394,6 +397,10 @@ ApplicationWindow {
                         text: "×"
                         implicitWidth: 32
                         implicitHeight: 32
+                        
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Close (Esc)"
+                        ToolTip.delay: 500
                         
                         background: Rectangle {
                             color: parent.hovered ? "#333333" : "transparent"

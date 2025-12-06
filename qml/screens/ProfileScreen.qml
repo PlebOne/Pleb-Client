@@ -80,6 +80,10 @@ Rectangle {
                     implicitHeight: 40
                     enabled: !profileController.is_loading
                     
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Refresh profile"
+                    ToolTip.delay: 500
+                    
                     background: Rectangle {
                         color: parent.pressed ? "#333333" : "transparent"
                         radius: 20
@@ -220,6 +224,10 @@ Rectangle {
                                     visible: !profileController.is_own_profile
                                     font.pixelSize: 14
                                     
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: profileController.is_following ? "Unfollow this user" : "Follow this user"
+                                    ToolTip.delay: 500
+                                    
                                     background: Rectangle {
                                         color: profileController.is_following ? 
                                             (parent.pressed ? "#333333" : "#1a1a1a") :
@@ -251,6 +259,10 @@ Rectangle {
                                     text: "Edit Profile"
                                     visible: profileController.is_own_profile
                                     font.pixelSize: 14
+                                    
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Edit your profile"
+                                    ToolTip.delay: 500
                                     
                                     background: Rectangle {
                                         color: parent.pressed ? "#333333" : "#1a1a1a"
@@ -504,6 +516,10 @@ Rectangle {
                     text: "Cancel"
                     onClicked: showEditDialog = false
                     
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Cancel editing"
+                    ToolTip.delay: 500
+                    
                     background: Rectangle {
                         color: parent.pressed ? "#333333" : "#1a1a1a"
                         radius: 8
@@ -523,6 +539,10 @@ Rectangle {
                 Button {
                     text: "Save"
                     enabled: !profileController.is_loading
+                    
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Save profile changes"
+                    ToolTip.delay: 500
                     
                     background: Rectangle {
                         color: parent.pressed ? "#7c3aed" : "#9333ea"

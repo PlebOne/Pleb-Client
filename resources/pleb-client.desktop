@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Pleb Client
+GenericName=Nostr Client
+Comment=A native Nostr client for Linux
+Exec=pleb_client_qt
+Icon=pleb-client
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=nostr;social;decentralized;bitcoin;
+StartupWMClass=pleb_client_qt

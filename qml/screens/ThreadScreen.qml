@@ -89,6 +89,10 @@ Rectangle {
                     text: "← Back"
                     font.pixelSize: 14
                     
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Go back to feed"
+                    ToolTip.delay: 500
+                    
                     background: Rectangle {
                         color: parent.pressed ? "#333333" : "#1a1a1a"
                         radius: 8
@@ -122,6 +126,10 @@ Rectangle {
                     text: "Reply"
                     font.pixelSize: 14
                     
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Reply to this thread"
+                    ToolTip.delay: 500
+                    
                     background: Rectangle {
                         color: parent.pressed ? "#7c22c9" : "#9333ea"
                         radius: 8
@@ -137,8 +145,10 @@ Rectangle {
                     }
                     
                     onClicked: {
-                        replyArea.visible = true
-                        replyInput.forceActiveFocus()
+                        composeDialog.replyToId = root.noteId
+                        composeDialog.replyToAuthor = ""
+                        composeDialog.replyToContent = ""
+                        composeDialog.open()
                     }
                 }
             }
@@ -236,8 +246,17 @@ Rectangle {
                     
                     onLikeClicked: feedController.like_note(noteId)
                     onRepostClicked: feedController.repost_note(noteId)
-                    onReplyClicked: replyArea.visible = true // Show reply composer
-                    onZapClicked: feedController.zap_note(noteId, 21, "") // Default 21 sats
+                    onReplyClicked: {
+                        composeDialog.replyToId = noteId
+                        composeDialog.replyToAuthor = authorName || "Anonymous"
+                        composeDialog.replyToContent = content.substring(0, 200) + (content.length > 200 ? "..." : "")
+                        composeDialog.open()
+                    }
+                    onZapClicked: {
+                        zapDialog.noteId = noteId
+                        zapDialog.authorName = authorName
+                        zapDialog.open()
+                    }
                     // Clicking a note in thread view navigates to that note's thread
                     onNoteClicked: function(id) {
                         if (id !== root.noteId) {
@@ -268,117 +287,23 @@ Rectangle {
                 }
             }
         }
+    }
+    
+    // Compose Dialog for replies
+    ComposeDialog {
+        id: composeDialog
+        feedController: root.feedController
         
-        // Reply composer
-        Rectangle {
-            id: replyArea
-            Layout.fillWidth: true
-            Layout.preferredHeight: visible ? Math.min(replyInput.contentHeight + 80, 200) : 0
-            color: "#111111"
-            visible: false
-            
-            Behavior on Layout.preferredHeight {
-                NumberAnimation { duration: 150 }
-            }
-            
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
-                
-                RowLayout {
-                    Layout.fillWidth: true
-                    
-                    Text {
-                        text: "Reply to thread"
-                        color: "#888888"
-                        font.pixelSize: 12
-                    }
-                    
-                    Item { Layout.fillWidth: true }
-                    
-                    Button {
-                        text: "×"
-                        font.pixelSize: 18
-                        implicitWidth: 28
-                        implicitHeight: 28
-                        
-                        background: Rectangle {
-                            color: parent.hovered ? "#333333" : "transparent"
-                            radius: 4
-                        }
-                        
-                        contentItem: Text {
-                            text: parent.text
-                            color: "#888888"
-                            font.pixelSize: 18
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        
-                        onClicked: {
-                            replyArea.visible = false
-                            replyInput.text = ""
-                        }
-                    }
-                }
-                
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    spacing: 8
-                    
-                    ScrollView {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        
-                        TextArea {
-                            id: replyInput
-                            placeholderText: "Write your reply..."
-                            placeholderTextColor: "#666666"
-                            color: "#ffffff"
-                            font.pixelSize: 14
-                            wrapMode: TextEdit.Wrap
-                            
-                            background: Rectangle {
-                                color: "#1a1a1a"
-                                radius: 8
-                            }
-                        }
-                    }
-                    
-                    Button {
-                        text: "Send"
-                        enabled: replyInput.text.trim().length > 0
-                        implicitWidth: 70
-                        implicitHeight: 36
-                        
-                        background: Rectangle {
-                            color: parent.enabled ? (parent.pressed ? "#7c22c9" : "#9333ea") : "#333333"
-                            radius: 8
-                        }
-                        
-                        contentItem: Text {
-                            text: parent.text
-                            color: parent.enabled ? "#ffffff" : "#666666"
-                            font.pixelSize: 14
-                            font.weight: Font.Medium
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        
-                        onClicked: {
-                            if (replyInput.text.trim().length > 0 && root.noteId) {
-                                feedController.reply_to_note(root.noteId, replyInput.text.trim())
-                                replyInput.text = ""
-                                replyArea.visible = false
-                                // Reload thread to show new reply
-                                feedController.load_thread(root.noteId)
-                            }
-                        }
-                    }
-                }
-            }
+        onPosted: {
+            // Reload thread to show new reply
+            feedController.load_thread(root.noteId)
         }
+    }
+    
+    // Zap Dialog
+    ZapDialog {
+        id: zapDialog
+        feedController: root.feedController
+        nwcConnected: true  // TODO: Get from appController when available
     }
 }

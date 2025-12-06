@@ -74,6 +74,10 @@ Rectangle {
                 text: "Open externally"
                 onClicked: Qt.openUrlExternally(root.source)
                 
+                ToolTip.visible: hovered
+                ToolTip.text: "Open video in default player"
+                ToolTip.delay: 500
+                
                 background: Rectangle {
                     color: parent.hovered ? "#3a3a3a" : "#2a2a2a"
                     radius: 4
@@ -127,6 +131,8 @@ Rectangle {
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
+            hoverEnabled: true
+            
             onClicked: {
                 if (mediaPlayer.playbackState === MediaPlayer.PlayingState) {
                     mediaPlayer.pause()
@@ -134,6 +140,14 @@ Rectangle {
                     mediaPlayer.play()
                 }
             }
+        }
+        
+        ToolTip.visible: playOverlay.visible && playOverlayHover.hovered
+        ToolTip.text: "Play video"
+        ToolTip.delay: 500
+        
+        HoverHandler {
+            id: playOverlayHover
         }
     }
     
@@ -206,6 +220,10 @@ Rectangle {
                         }
                     }
                 }
+                
+                ToolTip.visible: playPauseHover.hovered
+                ToolTip.text: mediaPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+                ToolTip.delay: 500
             }
             
             // Current time
@@ -288,6 +306,10 @@ Rectangle {
                     }
                 }
                 
+                ToolTip.visible: volumeHover.hovered && !volumePopup.visible
+                ToolTip.text: "Volume"
+                ToolTip.delay: 500
+                
                 // Volume popup
                 Rectangle {
                     id: volumePopup
@@ -363,6 +385,10 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: Qt.openUrlExternally(root.source)
                 }
+                
+                ToolTip.visible: externalHover.hovered
+                ToolTip.text: "Open in external player"
+                ToolTip.delay: 500
             }
         }
     }

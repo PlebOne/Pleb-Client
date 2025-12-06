@@ -85,6 +85,10 @@ Rectangle {
                             text: "↻"
                             font.pixelSize: 18
                             
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Refresh messages"
+                            ToolTip.delay: 500
+                            
                             background: Rectangle {
                                 color: parent.pressed ? "#333333" : "transparent"
                                 radius: 8
@@ -104,6 +108,10 @@ Rectangle {
                         Button {
                             text: "+"
                             font.pixelSize: 20
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Start new conversation"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: parent.pressed ? "#333333" : "transparent"
@@ -389,6 +397,10 @@ Rectangle {
                             text: "Send"
                             Layout.preferredHeight: parent.height
                             Layout.preferredWidth: 70
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Send message (Enter)"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: parent.enabled ? "#9333ea" : "#333333"

@@ -62,6 +62,21 @@ pub mod qobject {
         #[qinvokable]
         fn like_note(self: Pin<&mut FeedController>, note_id: &QString);
         
+        /// React to a note with a custom emoji (kind 7 reaction)
+        #[qinvokable]
+        fn react_to_note(self: Pin<&mut FeedController>, note_id: &QString, emoji: &QString);
+        
+        /// Fetch reactions and zap stats for a specific note (async - non-blocking)
+        /// Returns cached stats immediately if available, otherwise returns loading state and fetches in background
+        /// Use get_cached_note_stats() with a timer to poll for results
+        #[qinvokable]
+        fn fetch_note_stats(self: Pin<&mut FeedController>, note_id: &QString) -> QString;
+        
+        /// Get cached note stats (non-blocking, read-only)
+        /// Returns cached stats or loading state if fetch is in progress
+        #[qinvokable]
+        fn get_cached_note_stats(self: &FeedController, note_id: &QString) -> QString;
+        
         /// Repost a note
         #[qinvokable]
         fn repost_note(self: Pin<&mut FeedController>, note_id: &QString);
@@ -148,6 +163,19 @@ pub mod qobject {
         /// Emitted when loading state changes
         #[qsignal]
         fn loading_changed(self: Pin<&mut FeedController>, loading: bool);
+        
+        /// Emitted when a zap is successful (amount in sats)
+        #[qsignal]
+        fn zap_success(self: Pin<&mut FeedController>, note_id: &QString, amount_sats: i64);
+        
+        /// Emitted when a zap fails
+        #[qsignal]
+        fn zap_failed(self: Pin<&mut FeedController>, note_id: &QString, error: &QString);
+        
+        /// Emitted when note stats are fetched (async)
+        /// stats_json contains: {reactions: {emoji: count}, zapAmount: sats, zapCount: number}
+        #[qsignal]
+        fn note_stats_ready(self: Pin<&mut FeedController>, note_id: &QString, stats_json: &QString);
     }
 }
 
@@ -163,6 +191,7 @@ use crate::nostr::{
     feed::DisplayNote,
     profile::ProfileCache,
     blossom,
+    zap::{self, GLOBAL_NWC_MANAGER},
 };
 use crate::core::config::Config;
 use crate::signer::SignerClient;
@@ -210,6 +239,12 @@ lazy_static::lazy_static! {
         std::sync::RwLock::new(std::collections::HashMap::new());
     // Track pending fetches to avoid duplicate requests
     static ref PENDING_EMBEDS: std::sync::RwLock<std::collections::HashSet<String>> = 
+        std::sync::RwLock::new(std::collections::HashSet::new());
+    // Note stats cache - keyed by note ID
+    static ref NOTE_STATS_CACHE: std::sync::RwLock<std::collections::HashMap<String, String>> = 
+        std::sync::RwLock::new(std::collections::HashMap::new());
+    // Track pending stats fetches to avoid duplicate requests
+    static ref PENDING_STATS: std::sync::RwLock<std::collections::HashSet<String>> = 
         std::sync::RwLock::new(std::collections::HashSet::new());
 }
 
@@ -1171,6 +1206,195 @@ impl qobject::FeedController {
         }
     }
     
+    /// React to a note with a custom emoji (kind 7)
+    pub fn react_to_note(mut self: Pin<&mut Self>, note_id: &QString, emoji: &QString) {
+        let note_id_str = note_id.to_string();
+        let emoji_str = emoji.to_string();
+        let reaction_content = if emoji_str.is_empty() { "+".to_string() } else { emoji_str.clone() };
+        tracing::info!("Reacting to note {} with: {}", note_id_str, reaction_content);
+        
+        let user_pubkey = self.user_pubkey.clone();
+        
+        let result = FEED_RUNTIME.block_on(async {
+            let event_id = EventId::from_hex(&note_id_str)
+                .map_err(|e| format!("Invalid event ID: {}", e))?;
+            
+            let user_pk = user_pubkey.as_ref()
+                .and_then(|pk| PublicKey::parse(pk).ok())
+                .ok_or("User not initialized")?;
+            
+            // Get relay manager
+            let rm = RELAY_MANAGER.read().unwrap();
+            let manager = rm.as_ref().ok_or("Not connected to relays")?;
+            let client = manager.client();
+            
+            // Fetch the original event to get the author's pubkey
+            let original_event = manager.fetch_event(&event_id).await?
+                .ok_or("Original event not found")?;
+            
+            // Build reaction event (kind 7)
+            let tags = vec![
+                Tag::event(event_id),
+                Tag::public_key(original_event.pubkey),
+            ];
+            
+            // Try signer first
+            let signer = FEED_SIGNER.lock().await;
+            if let Some(s) = signer.as_ref() {
+                let unsigned = EventBuilder::new(Kind::Reaction, &reaction_content)
+                    .tags(tags)
+                    .build(user_pk);
+                
+                let unsigned_json = serde_json::to_string(&unsigned)
+                    .map_err(|e| format!("Serialization failed: {}", e))?;
+                
+                let signed_result = s.sign_event(&unsigned_json).await
+                    .map_err(|e| format!("Signing failed: {}", e))?;
+                
+                let signed_event: Event = serde_json::from_str(&signed_result.event_json)
+                    .map_err(|e| format!("Failed to parse signed event: {}", e))?;
+                
+                client.send_event(&signed_event).await
+                    .map_err(|e| format!("Failed to send: {}", e))?;
+                
+                Ok::<String, String>(signed_event.id.to_hex())
+            } else if let Some(nsec) = FEED_NSEC.read().unwrap().as_ref() {
+                // Use local keys
+                let secret_key = SecretKey::parse(nsec)
+                    .map_err(|e| format!("Invalid nsec: {}", e))?;
+                let keys = Keys::new(secret_key);
+                
+                let event = EventBuilder::new(Kind::Reaction, &reaction_content)
+                    .tags(tags)
+                    .sign_with_keys(&keys)
+                    .map_err(|e| format!("Failed to sign: {}", e))?;
+                
+                client.send_event(&event).await
+                    .map_err(|e| format!("Failed to send: {}", e))?;
+                
+                Ok(event.id.to_hex())
+            } else {
+                Err("No signing capability available".to_string())
+            }
+        });
+        
+        match result {
+            Ok(event_id) => {
+                tracing::info!("Reacted to note with {}, event: {}", reaction_content, event_id);
+            }
+            Err(e) => {
+                tracing::error!("Failed to react to note: {}", e);
+                self.as_mut().error_occurred(&QString::from(&e));
+            }
+        }
+    }
+    
+    /// Fetch reactions and zap stats for a specific note (async - non-blocking)
+    /// Returns cached data immediately if available, otherwise returns empty and fetches in background
+    /// Call get_cached_note_stats() to retrieve results after fetching
+    pub fn fetch_note_stats(self: Pin<&mut Self>, note_id: &QString) -> QString {
+        let note_id_str = note_id.to_string();
+        
+        // Check cache first
+        {
+            let cache = NOTE_STATS_CACHE.read().unwrap();
+            if let Some(cached) = cache.get(&note_id_str) {
+                return QString::from(cached);
+            }
+        }
+        
+        // Check if already pending
+        {
+            let pending = PENDING_STATS.read().unwrap();
+            if pending.contains(&note_id_str) {
+                // Already fetching, return empty (loading state)
+                return QString::from(r#"{"reactions":{},"zapAmount":0,"zapCount":0,"loading":true}"#);
+            }
+        }
+        
+        // Mark as pending
+        {
+            let mut pending = PENDING_STATS.write().unwrap();
+            pending.insert(note_id_str.clone());
+        }
+        
+        // Spawn background fetch - don't block UI
+        let note_id_clone = note_id_str.clone();
+        std::thread::spawn(move || {
+            let result: Result<String, String> = FEED_RUNTIME.block_on(async {
+                let event_id = EventId::from_hex(&note_id_clone)
+                    .map_err(|e| format!("Invalid event ID: {}", e))?;
+                
+                // Get relay manager
+                let rm = RELAY_MANAGER.read().unwrap();
+                let manager = rm.as_ref().ok_or_else(|| "Not connected to relays".to_string())?;
+                
+                // Fetch stats for this note
+                let stats = manager.fetch_note_stats(&[event_id]).await?;
+                
+                // Get the stats for this specific note
+                if let Some((reactions, zap_amount, zap_count)) = stats.get(&note_id_clone) {
+                    Ok(serde_json::json!({
+                        "reactions": reactions,
+                        "zapAmount": zap_amount,
+                        "zapCount": zap_count
+                    }).to_string())
+                } else {
+                    Ok(serde_json::json!({
+                        "reactions": {},
+                        "zapAmount": 0,
+                        "zapCount": 0
+                    }).to_string())
+                }
+            });
+            
+            // Cache the result
+            match result {
+                Ok(json) => {
+                    if let Ok(mut cache) = NOTE_STATS_CACHE.write() {
+                        cache.insert(note_id_clone.clone(), json);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to fetch note stats for {}: {}", note_id_clone, e);
+                    // Cache empty result to prevent repeated failed fetches
+                    if let Ok(mut cache) = NOTE_STATS_CACHE.write() {
+                        cache.insert(note_id_clone.clone(), r#"{"reactions":{},"zapAmount":0,"zapCount":0}"#.to_string());
+                    }
+                }
+            }
+            
+            // Remove from pending
+            if let Ok(mut pending) = PENDING_STATS.write() {
+                pending.remove(&note_id_clone);
+            }
+        });
+        
+        // Return loading state while fetching
+        QString::from(r#"{"reactions":{},"zapAmount":0,"zapCount":0,"loading":true}"#)
+    }
+    
+    /// Get cached note stats (non-blocking)
+    /// Returns cached stats or empty if not yet fetched
+    pub fn get_cached_note_stats(&self, note_id: &QString) -> QString {
+        let note_id_str = note_id.to_string();
+        
+        // Check cache
+        let cache = NOTE_STATS_CACHE.read().unwrap();
+        if let Some(cached) = cache.get(&note_id_str) {
+            return QString::from(cached);
+        }
+        
+        // Check if pending
+        let pending = PENDING_STATS.read().unwrap();
+        if pending.contains(&note_id_str) {
+            return QString::from(r#"{"reactions":{},"zapAmount":0,"zapCount":0,"loading":true}"#);
+        }
+        
+        // Not in cache and not pending
+        QString::from(r#"{"reactions":{},"zapAmount":0,"zapCount":0}"#)
+    }
+    
     /// Repost a note (kind 6)
     pub fn repost_note(mut self: Pin<&mut Self>, note_id: &QString) {
         let note_id_str = note_id.to_string();
@@ -1353,14 +1577,108 @@ impl qobject::FeedController {
     }
     
     /// Zap a note
-    pub fn zap_note(mut self: Pin<&mut Self>, note_id: &QString, amount_sats: i64, _comment: &QString) {
+    pub fn zap_note(mut self: Pin<&mut Self>, note_id: &QString, amount_sats: i64, comment: &QString) {
         let note_id_str = note_id.to_string();
-        tracing::info!("Zap {} with {} sats", note_id_str, amount_sats);
+        let comment_str = comment.to_string();
+        tracing::info!("Zapping note {} with {} sats", note_id_str, amount_sats);
         
-        // TODO: Implement via NWC - requires NWC connection to be established first
-        // For now, just log it
-        tracing::warn!("Zapping requires NWC connection - not yet implemented");
-        self.as_mut().error_occurred(&QString::from("Zapping requires NWC wallet connection"));
+        // Get user's signing keys
+        let nsec_opt = FEED_NSEC.read().unwrap().clone();
+        
+        let result = FEED_RUNTIME.block_on(async {
+            // Check if NWC is connected
+            let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
+            if !nwc.is_connected() {
+                return Err("NWC wallet not connected. Please connect your wallet in Settings.".to_string());
+            }
+            
+            // Get signing keys
+            let keys = match nsec_opt.as_ref() {
+                Some(nsec) => {
+                    let secret_key = SecretKey::parse(nsec)
+                        .map_err(|e| format!("Invalid nsec: {}", e))?;
+                    Keys::new(secret_key)
+                }
+                None => {
+                    return Err("No signing keys available".to_string());
+                }
+            };
+            
+            // Get relay manager for fetching note author
+            let rm = RELAY_MANAGER.read().unwrap();
+            let manager = rm.as_ref().ok_or("Not connected to relays")?;
+            let client = manager.client();
+            
+            // Parse note ID
+            let event_id = EventId::parse(&note_id_str)
+                .or_else(|_| EventId::from_bech32(&note_id_str))
+                .map_err(|e| format!("Invalid note ID: {}", e))?;
+            
+            // Fetch the note to get author's pubkey and find their lud16
+            let note_filter = Filter::new()
+                .id(event_id.clone())
+                .limit(1);
+            
+            let note_events = client.fetch_events(note_filter, std::time::Duration::from_secs(10)).await
+                .map_err(|e| format!("Failed to fetch note: {}", e))?;
+            
+            let note_event = note_events.into_iter().next()
+                .ok_or("Note not found")?;
+            
+            let author_pubkey = note_event.pubkey.clone();
+            
+            // Fetch author's profile to get their lightning address
+            let profile_filter = Filter::new()
+                .kind(Kind::Metadata)
+                .author(author_pubkey.clone())
+                .limit(1);
+            
+            let profile_events = client.fetch_events(profile_filter, std::time::Duration::from_secs(10)).await
+                .map_err(|e| format!("Failed to fetch author profile: {}", e))?;
+            
+            let profile_event = profile_events.into_iter().next()
+                .ok_or("Author profile not found")?;
+            
+            // Parse metadata to get lud16
+            let metadata: Metadata = serde_json::from_str(&profile_event.content)
+                .map_err(|e| format!("Failed to parse profile metadata: {}", e))?;
+            
+            let lud16 = metadata.lud16
+                .ok_or("Author doesn't have a lightning address (lud16)")?;
+            
+            if lud16.is_empty() {
+                return Err("Author's lightning address is empty".to_string());
+            }
+            
+            // Get relay URLs for zap request (use default relays)
+            let relays: Vec<String> = crate::nostr::relay::DEFAULT_RELAYS.iter()
+                .take(3) // Include up to 3 relays
+                .map(|s| s.to_string())
+                .collect();
+            
+            // Perform the zap
+            zap::zap(
+                &mut *nwc,
+                &keys,
+                &author_pubkey,
+                &lud16,
+                Some(&event_id),
+                amount_sats as u64,
+                &comment_str,
+                &relays,
+            ).await
+        });
+        
+        match result {
+            Ok(preimage) => {
+                tracing::info!("Zap successful! Preimage: {}", &preimage[..16.min(preimage.len())]);
+                self.as_mut().zap_success(&QString::from(&note_id_str), amount_sats);
+            }
+            Err(e) => {
+                tracing::error!("Zap failed: {}", e);
+                self.as_mut().zap_failed(&QString::from(&note_id_str), &QString::from(&e));
+            }
+        }
     }
     
     /// Post a new note

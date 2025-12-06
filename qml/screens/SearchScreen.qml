@@ -119,6 +119,10 @@ Rectangle {
                                 implicitWidth: 24
                                 implicitHeight: 24
                                 
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Clear search"
+                                ToolTip.delay: 500
+                                
                                 background: Rectangle {
                                     color: parent.hovered ? "#333333" : "transparent"
                                     radius: 12
@@ -150,6 +154,10 @@ Rectangle {
                             checked: searchController && searchController.search_type === "users"
                             implicitHeight: 44
                             
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Search for users"
+                            ToolTip.delay: 500
+                            
                             background: Rectangle {
                                 color: parent.checked ? "#9333ea" : (parent.hovered ? "#252525" : "#1a1a1a")
                                 radius: 8
@@ -176,6 +184,10 @@ Rectangle {
                             checked: searchController && searchController.search_type === "notes"
                             implicitHeight: 44
                             
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Search for notes"
+                            ToolTip.delay: 500
+                            
                             background: Rectangle {
                                 color: parent.checked ? "#9333ea" : (parent.hovered ? "#252525" : "#1a1a1a")
                                 radius: 8
@@ -201,6 +213,10 @@ Rectangle {
                             checkable: true
                             checked: searchController && searchController.search_type === "hashtags"
                             implicitHeight: 44
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Search for hashtags"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: parent.checked ? "#9333ea" : (parent.hovered ? "#252525" : "#1a1a1a")
@@ -325,6 +341,10 @@ Rectangle {
                         Button {
                             text: "View"
                             implicitHeight: 32
+                            
+                            ToolTip.visible: hovered
+                            ToolTip.text: "View profile"
+                            ToolTip.delay: 500
                             
                             background: Rectangle {
                                 color: parent.pressed ? "#7c22c9" : "#9333ea"
