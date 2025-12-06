@@ -107,11 +107,14 @@ pub mod qobject {
         #[qsignal]
         fn error_occurred(self: Pin<&mut ProfileController>, error: &QString);
     }
+    
+    // Enable threading support for background work with UI updates
+    impl cxx_qt::Threading for ProfileController {}
 }
 
 use std::pin::Pin;
 use cxx_qt_lib::QString;
-use cxx_qt::CxxQtType;
+use cxx_qt::{CxxQtType, Threading};
 use nostr_sdk::prelude::*;
 use crate::nostr::relay::RelayManager;
 use crate::nostr::profile::ProfileCache;
@@ -219,7 +222,7 @@ impl qobject::ProfileController {
     }
     
     /// Fetch who the logged-in user is following
-    fn fetch_user_following(mut self: Pin<&mut Self>) {
+    fn fetch_user_following(self: Pin<&mut Self>) {
         let logged_in = {
             self.as_ref().logged_in_pubkey.clone()
         };
@@ -228,18 +231,22 @@ impl qobject::ProfileController {
             return;
         };
         
-        let result = std::thread::spawn(move || {
-            PROFILE_RUNTIME.block_on(async {
+        let qt_thread = self.qt_thread();
+        
+        std::thread::spawn(move || {
+            let result = PROFILE_RUNTIME.block_on(async {
                 let mut manager = create_authenticated_relay_manager();
                 manager.connect().await?;
                 manager.fetch_contact_list(&pubkey).await
-            })
-        }).join();
-        
-        if let Ok(Ok(following)) = result {
-            let mut rust = self.as_mut().rust_mut();
-            rust.user_following = following;
-        }
+            });
+            
+            if let Ok(following) = result {
+                let _ = qt_thread.queue(move |mut qobject| {
+                    let mut rust = qobject.as_mut().rust_mut();
+                    rust.user_following = following;
+                });
+            }
+        });
     }
     
     /// Load profile for a given pubkey
@@ -284,10 +291,13 @@ impl qobject::ProfileController {
         self.as_mut().set_is_following(is_following);
         self.as_mut().set_is_loading(true);
         
-        // Fetch profile data
+        // Get qt_thread for UI updates
+        let qt_thread = self.qt_thread();
         let pk = target_pubkey.clone();
-        let result = std::thread::spawn(move || {
-            PROFILE_RUNTIME.block_on(async {
+        
+        // Spawn background thread - non-blocking
+        std::thread::spawn(move || {
+            let result = PROFILE_RUNTIME.block_on(async {
                 let mut manager = create_authenticated_relay_manager();
                 manager.connect().await?;
                 
@@ -299,76 +309,72 @@ impl qobject::ProfileController {
                 // Fetch following list
                 let following = manager.fetch_contact_list(&pk).await?;
                 
-                // Fetch followers (users who follow this pubkey)
-                // This is expensive - we'd need to query for kind:3 events that contain this pubkey
-                // For now, we'll return an empty list
+                // Fetch followers (expensive - skip for now)
                 let followers: Vec<PublicKey> = Vec::new();
                 
-                Ok::<_, String>((profile, following, followers))
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok((profile, following, followers))) => {
-                let following_count = following.len() as i32;
-                let followers_count = followers.len() as i32;
-                
-                // Convert to list items
-                let following_items: Vec<ProfileListItem> = following.iter()
-                    .map(|pk| ProfileListItem {
-                        pubkey: pk.to_hex(),
-                        name: None,
-                        display_name: None,
-                        picture: None,
-                        nip05: None,
-                    })
-                    .collect();
-                
-                {
-                    let mut rust = self.as_mut().rust_mut();
-                    rust.following_list = following_items;
-                    rust.followers_list = Vec::new();
+                Ok::<_, String>((profile, following, followers, pk))
+            });
+            
+            match result {
+                Ok((profile, following, followers, target_pubkey)) => {
+                    let following_count = following.len() as i32;
+                    let followers_count = followers.len() as i32;
+                    
+                    // Convert to list items
+                    let following_items: Vec<ProfileListItem> = following.iter()
+                        .map(|pk| ProfileListItem {
+                            pubkey: pk.to_hex(),
+                            name: None,
+                            display_name: None,
+                            picture: None,
+                            nip05: None,
+                        })
+                        .collect();
+                    
+                    let _ = qt_thread.queue(move |mut qobject| {
+                        {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            rust.following_list = following_items;
+                            rust.followers_list = Vec::new();
+                        }
+                        
+                        if let Some(p) = profile {
+                            qobject.as_mut().set_name(QString::from(&p.name.unwrap_or_default()));
+                            qobject.as_mut().set_display_name(QString::from(&p.display_name.unwrap_or_default()));
+                            qobject.as_mut().set_about(QString::from(&p.about.unwrap_or_default()));
+                            qobject.as_mut().set_picture(QString::from(&p.picture.unwrap_or_default()));
+                            qobject.as_mut().set_banner(QString::from(&p.banner.unwrap_or_default()));
+                            qobject.as_mut().set_website(QString::from(&p.website.unwrap_or_default()));
+                            qobject.as_mut().set_nip05(QString::from(&p.nip05.unwrap_or_default()));
+                            qobject.as_mut().set_lud16(QString::from(&p.lud16.unwrap_or_default()));
+                        } else {
+                            // No profile found - use defaults
+                            let npub = target_pubkey.to_bech32()
+                                .map(|s| format!("{}...", &s[..16]))
+                                .unwrap_or_else(|_| "Unknown".to_string());
+                            qobject.as_mut().set_display_name(QString::from(&npub));
+                        }
+                        
+                        qobject.as_mut().set_following_count(following_count);
+                        qobject.as_mut().set_followers_count(followers_count);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().set_error_message(QString::from(""));
+                        qobject.as_mut().profile_loaded();
+                        
+                        tracing::info!("Profile loaded: following={}, followers={}", following_count, followers_count);
+                    });
                 }
-                
-                if let Some(p) = profile {
-                    self.as_mut().set_name(QString::from(&p.name.unwrap_or_default()));
-                    self.as_mut().set_display_name(QString::from(&p.display_name.unwrap_or_default()));
-                    self.as_mut().set_about(QString::from(&p.about.unwrap_or_default()));
-                    self.as_mut().set_picture(QString::from(&p.picture.unwrap_or_default()));
-                    self.as_mut().set_banner(QString::from(&p.banner.unwrap_or_default()));
-                    self.as_mut().set_website(QString::from(&p.website.unwrap_or_default()));
-                    self.as_mut().set_nip05(QString::from(&p.nip05.unwrap_or_default()));
-                    self.as_mut().set_lud16(QString::from(&p.lud16.unwrap_or_default()));
-                } else {
-                    // No profile found - use defaults
-                    let npub = target_pubkey.to_bech32()
-                        .map(|s| format!("{}...", &s[..16]))
-                        .unwrap_or_else(|_| "Unknown".to_string());
-                    self.as_mut().set_display_name(QString::from(&npub));
+                Err(e) => {
+                    let error_msg = e.clone();
+                    let _ = qt_thread.queue(move |mut qobject| {
+                        tracing::error!("Failed to load profile: {}", error_msg);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().set_error_message(QString::from(&error_msg));
+                        qobject.as_mut().error_occurred(&QString::from(&error_msg));
+                    });
                 }
-                
-                self.as_mut().set_following_count(following_count);
-                self.as_mut().set_followers_count(followers_count);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().set_error_message(QString::from(""));
-                self.as_mut().profile_loaded();
-                
-                tracing::info!("Profile loaded: following={}, followers={}", following_count, followers_count);
             }
-            Ok(Err(e)) => {
-                tracing::error!("Failed to load profile: {}", e);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().set_error_message(QString::from(&e));
-                self.as_mut().error_occurred(&QString::from(&e));
-            }
-            Err(_) => {
-                let err = "Thread panicked while loading profile";
-                tracing::error!("{}", err);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().set_error_message(QString::from(err));
-                self.as_mut().error_occurred(&QString::from(err));
-            }
-        }
+        });
     }
     
     /// Reload current profile
@@ -496,7 +502,7 @@ impl qobject::ProfileController {
     }
     
     /// Fetch notes count for current profile
-    pub fn fetch_notes_count(mut self: Pin<&mut Self>) {
+    pub fn fetch_notes_count(self: Pin<&mut Self>) {
         let target = {
             self.as_ref().target_pubkey.clone()
         };
@@ -505,8 +511,10 @@ impl qobject::ProfileController {
             return;
         };
         
-        let result = std::thread::spawn(move || {
-            PROFILE_RUNTIME.block_on(async {
+        let qt_thread = self.qt_thread();
+        
+        std::thread::spawn(move || {
+            let result = PROFILE_RUNTIME.block_on(async {
                 let mut manager = create_authenticated_relay_manager();
                 manager.connect().await?;
                 
@@ -520,12 +528,14 @@ impl qobject::ProfileController {
                     .map_err(|e| e.to_string())?;
                 
                 Ok::<_, String>(events.len())
-            })
-        }).join();
-        
-        if let Ok(Ok(count)) = result {
-            self.as_mut().set_notes_count(count as i32);
-        }
+            });
+            
+            if let Ok(count) = result {
+                let _ = qt_thread.queue(move |mut qobject| {
+                    qobject.as_mut().set_notes_count(count as i32);
+                });
+            }
+        });
     }
     
     /// Get following item at index

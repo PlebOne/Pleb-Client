@@ -149,10 +149,13 @@ pub mod qobject {
         #[qsignal]
         fn loading_status_changed(self: Pin<&mut AppController>, status: &QString);
     }
+
+    impl cxx_qt::Threading for AppController {}
 }
 
 use std::pin::Pin;
 use std::sync::Arc;
+use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 use tokio::sync::Mutex;
 use crate::signer::SignerClient;
@@ -411,30 +414,31 @@ impl qobject::AppController {
                                 if let Ok(nwc_uri) = creds.get_nwc(&password_for_nwc) {
                                     if let Some(uri) = nwc_uri {
                                         tracing::info!("Found saved NWC, reconnecting...");
-                                        // Connect NWC in background
-                                        let result = std::thread::spawn(move || {
-                                            TOKIO_RUNTIME.block_on(async {
+                                        let qt_thread = self.qt_thread();
+                                        
+                                        // Connect NWC in background without blocking
+                                        std::thread::spawn(move || {
+                                            let result = TOKIO_RUNTIME.block_on(async {
                                                 let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                                                 nwc.connect(&uri).await?;
                                                 let balance = nwc.balance_sats();
                                                 Ok::<_, String>(balance)
-                                            })
-                                        }).join();
-                                        
-                                        match result {
-                                            Ok(Ok(balance)) => {
-                                                tracing::info!("NWC reconnected, balance: {} sats", balance);
-                                                self.as_mut().set_wallet_balance_sats(balance);
-                                                self.as_mut().set_nwc_connected(true);
-                                                self.as_mut().wallet_updated(balance);
-                                            }
-                                            Ok(Err(e)) => {
-                                                tracing::warn!("Failed to reconnect NWC: {}", e);
-                                            }
-                                            Err(_) => {
-                                                tracing::warn!("NWC reconnection thread panicked");
-                                            }
-                                        }
+                                            });
+                                            
+                                            let _ = qt_thread.queue(move |mut qobject| {
+                                                match result {
+                                                    Ok(balance) => {
+                                                        tracing::info!("NWC reconnected, balance: {} sats", balance);
+                                                        qobject.as_mut().set_wallet_balance_sats(balance);
+                                                        qobject.as_mut().set_nwc_connected(true);
+                                                        qobject.as_mut().wallet_updated(balance);
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!("Failed to reconnect NWC: {}", e);
+                                                    }
+                                                }
+                                            });
+                                        });
                                     }
                                 }
                             }
@@ -559,37 +563,35 @@ impl qobject::AppController {
         
         self.as_mut().set_is_loading(true);
         
+        let qt_thread = self.qt_thread();
+        
         // Connect in background
-        let result = std::thread::spawn(move || {
-            TOKIO_RUNTIME.block_on(async {
+        std::thread::spawn(move || {
+            let result = TOKIO_RUNTIME.block_on(async {
                 let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                 nwc.connect(&uri_str).await?;
                 let balance = nwc.balance_sats();
                 Ok::<_, String>(balance)
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok(balance)) => {
-                tracing::info!("NWC connected, balance: {} sats", balance);
-                self.as_mut().set_wallet_balance_sats(balance);
-                self.as_mut().set_nwc_connected(true);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().wallet_updated(balance);
-            }
-            Ok(Err(e)) => {
-                tracing::error!("NWC connection failed: {}", e);
-                self.as_mut().set_nwc_connected(false);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().set_error_message(QString::from(&format!("NWC error: {}", e)));
-            }
-            Err(_) => {
-                tracing::error!("NWC connection thread panicked");
-                self.as_mut().set_nwc_connected(false);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().set_error_message(QString::from("NWC connection failed"));
-            }
-        }
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok(balance) => {
+                        tracing::info!("NWC connected, balance: {} sats", balance);
+                        qobject.as_mut().set_wallet_balance_sats(balance);
+                        qobject.as_mut().set_nwc_connected(true);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().wallet_updated(balance);
+                    }
+                    Err(e) => {
+                        tracing::error!("NWC connection failed: {}", e);
+                        qobject.as_mut().set_nwc_connected(false);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().set_error_message(QString::from(&format!("NWC error: {}", e)));
+                    }
+                }
+            });
+        });
     }
     
     /// Connect NWC wallet and save to encrypted storage
@@ -600,73 +602,73 @@ impl qobject::AppController {
         
         self.as_mut().set_is_loading(true);
         
+        let qt_thread = self.qt_thread();
+        
         // Connect in background
-        let result = std::thread::spawn(move || {
-            TOKIO_RUNTIME.block_on(async {
+        std::thread::spawn(move || {
+            let result = TOKIO_RUNTIME.block_on(async {
                 let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                 nwc.connect(&uri_str).await?;
                 let balance = nwc.balance_sats();
                 Ok::<_, String>((balance, uri_str))
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok((balance, uri))) => {
-                tracing::info!("NWC connected, balance: {} sats", balance);
-                
-                // Save NWC URI to encrypted storage
-                if let Ok(creds) = CredentialManager::new() {
-                    if let Err(e) = creds.save_nwc(&uri, &password_str) {
-                        tracing::warn!("Failed to save NWC: {}", e);
-                        // Still connected, just not persisted
-                    } else {
-                        tracing::info!("NWC URI saved to encrypted storage");
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok((balance, uri)) => {
+                        tracing::info!("NWC connected, balance: {} sats", balance);
+                        
+                        // Save NWC URI to encrypted storage
+                        if let Ok(creds) = CredentialManager::new() {
+                            if let Err(e) = creds.save_nwc(&uri, &password_str) {
+                                tracing::warn!("Failed to save NWC: {}", e);
+                                // Still connected, just not persisted
+                            } else {
+                                tracing::info!("NWC URI saved to encrypted storage");
+                            }
+                        }
+                        
+                        qobject.as_mut().set_wallet_balance_sats(balance);
+                        qobject.as_mut().set_nwc_connected(true);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().wallet_updated(balance);
+                    }
+                    Err(e) => {
+                        tracing::error!("NWC connection failed: {}", e);
+                        qobject.as_mut().set_nwc_connected(false);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().set_error_message(QString::from(&format!("NWC error: {}", e)));
                     }
                 }
-                
-                self.as_mut().set_wallet_balance_sats(balance);
-                self.as_mut().set_nwc_connected(true);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().wallet_updated(balance);
-            }
-            Ok(Err(e)) => {
-                tracing::error!("NWC connection failed: {}", e);
-                self.as_mut().set_nwc_connected(false);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().set_error_message(QString::from(&format!("NWC error: {}", e)));
-            }
-            Err(_) => {
-                tracing::error!("NWC connection thread panicked");
-                self.as_mut().set_nwc_connected(false);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().set_error_message(QString::from("NWC connection failed"));
-            }
-        }
+            });
+        });
     }
     
     /// Disconnect NWC wallet
-    pub fn disconnect_nwc(mut self: Pin<&mut Self>) {
+    pub fn disconnect_nwc(self: Pin<&mut Self>) {
         tracing::info!("Disconnecting NWC wallet...");
         
+        let qt_thread = self.qt_thread();
+        
         // Disconnect in background
-        let result = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             TOKIO_RUNTIME.block_on(async {
                 let mut nwc = GLOBAL_NWC_MANAGER.lock().await;
                 nwc.disconnect().await;
-            })
-        }).join();
-        
-        if result.is_ok() {
-            // Clear saved NWC URI
-            if let Ok(creds) = CredentialManager::new() {
-                let _ = creds.clear_nwc();
-            }
+            });
             
-            self.as_mut().set_wallet_balance_sats(0);
-            self.as_mut().set_nwc_connected(false);
-            self.as_mut().wallet_updated(0);
-            tracing::info!("NWC wallet disconnected");
-        }
+            let _ = qt_thread.queue(move |mut qobject| {
+                // Clear saved NWC URI
+                if let Ok(creds) = CredentialManager::new() {
+                    let _ = creds.clear_nwc();
+                }
+                
+                qobject.as_mut().set_wallet_balance_sats(0);
+                qobject.as_mut().set_nwc_connected(false);
+                qobject.as_mut().wallet_updated(0);
+                tracing::info!("NWC wallet disconnected");
+            });
+        });
     }
     
     /// Check if NWC is connected

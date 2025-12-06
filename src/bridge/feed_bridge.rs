@@ -734,12 +734,15 @@ impl qobject::FeedController {
         self.as_mut().loading_changed(true);
         
         let feed = FeedType::from_str(&current_feed_type);
+        let current_feed_clone = current_feed_type.clone();
         
         tracing::info!("Loading more for {} feed, before timestamp {}", current_feed_type, oldest_timestamp);
         
+        let qt_thread = self.qt_thread();
+        
         // Spawn thread to avoid Qt/tokio conflicts (same pattern as check_for_new)
-        let result = std::thread::spawn(move || {
-            FEED_RUNTIME.block_on(async {
+        std::thread::spawn(move || {
+            let result = FEED_RUNTIME.block_on(async {
                 let rm = RELAY_MANAGER.read().unwrap();
                 let Some(manager) = rm.as_ref() else {
                     return Err("Relay manager not initialized".to_string());
@@ -786,75 +789,71 @@ impl qobject::FeedController {
                     .collect();
                 
                 Ok(notes)
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok(mut new_notes)) => {
-                // Sort by timestamp descending (newest first)
-                new_notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-                
-                // Filter out any duplicates based on note ID
-                let existing_ids: std::collections::HashSet<String> = {
-                    let rust = self.as_ref();
-                    rust.notes.iter().map(|n| n.id.clone()).collect()
-                };
-                
-                new_notes.retain(|n| !existing_ids.contains(&n.id));
-                
-                let count = new_notes.len() as i32;
-                
-                if count == 0 {
-                    tracing::info!("No new older notes found (all were duplicates)");
-                    self.as_mut().set_is_loading(false);
-                    self.as_mut().loading_changed(false);
-                    return;
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok(mut new_notes) => {
+                        // Sort by timestamp descending (newest first)
+                        new_notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                        
+                        // Filter out any duplicates based on note ID
+                        let existing_ids: std::collections::HashSet<String> = {
+                            let rust = qobject.as_ref();
+                            rust.notes.iter().map(|n| n.id.clone()).collect()
+                        };
+                        
+                        new_notes.retain(|n| !existing_ids.contains(&n.id));
+                        
+                        let count = new_notes.len() as i32;
+                        
+                        if count == 0 {
+                            tracing::info!("No new older notes found (all were duplicates)");
+                            qobject.as_mut().set_is_loading(false);
+                            qobject.as_mut().loading_changed(false);
+                            return;
+                        }
+                        
+                        let total = {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            // Append to end (these are older notes)
+                            rust.notes.extend(new_notes);
+                            rust.note_count = rust.notes.len() as i32;
+                            rust.note_count
+                        };
+                        
+                        // Update cache
+                        if let Ok(mut cache) = FEED_CACHE.write() {
+                            let rust = qobject.as_ref();
+                            cache.insert(current_feed_clone.clone(), rust.notes.clone());
+                        }
+                        
+                        // Get newest for logging
+                        let new_oldest = {
+                            let rust = qobject.as_ref();
+                            rust.notes.last().map(|n| n.created_at).unwrap_or(0)
+                        };
+                        let hours = if newest_timestamp > 0 && new_oldest > 0 {
+                            (newest_timestamp - new_oldest) / 3600
+                        } else { 0 };
+                        
+                        qobject.as_mut().set_note_count(total);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().loading_changed(false);
+                        qobject.as_mut().more_loaded(count);
+                        qobject.as_mut().feed_updated();
+                        
+                        tracing::info!("Loaded {} more notes, total: {}, coverage: {} hours", count, total, hours);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load more: {}", e);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().loading_changed(false);
+                        qobject.as_mut().error_occurred(&QString::from(&e));
+                    }
                 }
-                
-                let total = {
-                    let mut rust = self.as_mut().rust_mut();
-                    // Append to end (these are older notes)
-                    rust.notes.extend(new_notes);
-                    rust.note_count = rust.notes.len() as i32;
-                    rust.note_count
-                };
-                
-                // Update cache
-                if let Ok(mut cache) = FEED_CACHE.write() {
-                    let rust = self.as_ref();
-                    cache.insert(current_feed_type.clone(), rust.notes.clone());
-                }
-                
-                self.as_mut().set_note_count(total);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().loading_changed(false);
-                self.as_mut().more_loaded(count);
-                self.as_mut().feed_updated();
-                
-                // Calculate new coverage
-                let new_oldest = {
-                    let rust = self.as_ref();
-                    rust.notes.last().map(|n| n.created_at).unwrap_or(0)
-                };
-                let hours = if newest_timestamp > 0 && new_oldest > 0 {
-                    (newest_timestamp - new_oldest) / 3600
-                } else { 0 };
-                
-                tracing::info!("Loaded {} more notes, total: {}, coverage: {} hours", count, total, hours);
-            }
-            Ok(Err(e)) => {
-                tracing::error!("Failed to load more: {}", e);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().loading_changed(false);
-                self.as_mut().error_occurred(&QString::from(&e));
-            }
-            Err(_panic) => {
-                tracing::error!("Panic occurred while loading more notes");
-                self.as_mut().set_is_loading(false);
-                self.as_mut().loading_changed(false);
-                self.as_mut().error_occurred(&QString::from("Internal error loading notes"));
-            }
-        }
+            });
+        });
     }
     
     /* Original load_more - disabled due to segfaults
@@ -995,14 +994,17 @@ impl qobject::FeedController {
         
         let current = self.current_feed().to_string();
         let feed = FeedType::from_str(&current);
+        let current_clone = current.clone();
         
         tracing::info!("Checking for new {} notes since timestamp {}", current, newest_timestamp);
         
         // Don't set loading state for quick check - prevents UI flicker
         
+        let qt_thread = self.qt_thread();
+        
         // Use a separate thread to avoid Qt/tokio conflicts
-        let result = std::thread::spawn(move || {
-            FEED_RUNTIME.block_on(async {
+        std::thread::spawn(move || {
+            let result = FEED_RUNTIME.block_on(async {
                 let rm = RELAY_MANAGER.read().unwrap();
                 let Some(manager) = rm.as_ref() else {
                     return Err("Relay manager not initialized".to_string());
@@ -1066,52 +1068,50 @@ impl qobject::FeedController {
                     .collect();
             
                 Ok(notes)
-            })
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok(mut new_notes) => {
+                        if new_notes.is_empty() {
+                            tracing::info!("No new notes found for {} feed", current_clone);
+                            qobject.as_mut().new_notes_found(0);
+                            return;
+                        }
+                        
+                        // Sort new notes by timestamp descending
+                        new_notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                        let new_count = new_notes.len() as i32;
+                        
+                        // Prepend new notes to existing ones
+                        let total = {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            // Prepend new notes
+                            new_notes.append(&mut rust.notes);
+                            rust.notes = new_notes;
+                            rust.note_count = rust.notes.len() as i32;
+                            rust.note_count
+                        };
+                        
+                        // Update the cache too
+                        if let Ok(mut cache) = FEED_CACHE.write() {
+                            let rust = qobject.as_ref();
+                            cache.insert(current_clone.clone(), rust.notes.clone());
+                        }
+                        
+                        qobject.as_mut().set_note_count(total);
+                        qobject.as_mut().new_notes_found(new_count);
+                        qobject.as_mut().feed_updated();
+                        
+                        tracing::info!("Found {} new notes for {} feed, total: {}", new_count, current_clone, total);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to check for new notes: {}", e);
+                        qobject.as_mut().error_occurred(&QString::from(&e));
+                    }
+                }
+            });
         });
-        
-        match result.join() {
-            Ok(Ok(mut new_notes)) => {
-                if new_notes.is_empty() {
-                    tracing::info!("No new notes found for {} feed", current);
-                    self.as_mut().new_notes_found(0);
-                    return;
-                }
-                
-                // Sort new notes by timestamp descending
-                new_notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-                let new_count = new_notes.len() as i32;
-                
-                // Prepend new notes to existing ones
-                let total = {
-                    let mut rust = self.as_mut().rust_mut();
-                    // Prepend new notes
-                    new_notes.append(&mut rust.notes);
-                    rust.notes = new_notes;
-                    rust.note_count = rust.notes.len() as i32;
-                    rust.note_count
-                };
-                
-                // Update the cache too
-                if let Ok(mut cache) = FEED_CACHE.write() {
-                    let rust = self.as_ref();
-                    cache.insert(current.clone(), rust.notes.clone());
-                }
-                
-                self.as_mut().set_note_count(total);
-                self.as_mut().new_notes_found(new_count);
-                self.as_mut().feed_updated();
-                
-                tracing::info!("Found {} new notes for {} feed, total: {}", new_count, current, total);
-            }
-            Ok(Err(e)) => {
-                tracing::error!("Failed to check for new notes: {}", e);
-                self.as_mut().error_occurred(&QString::from(&e));
-            }
-            Err(_panic) => {
-                tracing::error!("Panic occurred while checking for new notes");
-                self.as_mut().error_occurred(&QString::from("Internal error checking for new notes"));
-            }
-        }
     }
 
     /// Refresh the current feed
@@ -1144,9 +1144,11 @@ impl qobject::FeedController {
         self.as_mut().set_is_loading(true);
         self.as_mut().set_thread_note_id(note_id.clone());
         
+        let qt_thread = self.qt_thread();
+        
         // Use a separate thread to avoid Qt/tokio conflicts
-        let result = std::thread::spawn(move || {
-            FEED_RUNTIME.block_on(async {
+        std::thread::spawn(move || {
+            let result = FEED_RUNTIME.block_on(async {
                 let rm = RELAY_MANAGER.read().unwrap();
                 let Some(manager) = rm.as_ref() else {
                     return Err("Relay manager not initialized".to_string());
@@ -1204,33 +1206,30 @@ impl qobject::FeedController {
                 }
                 
                 Ok(thread_notes)
-            })
-        });
-        
-        match result.join() {
-            Ok(Ok(thread_notes)) => {
-                let count = thread_notes.len() as i32;
-                {
-                    let mut rust = self.as_mut().rust_mut();
-                    rust.thread_notes = thread_notes;
-                    rust.thread_count = count;
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok(thread_notes) => {
+                        let count = thread_notes.len() as i32;
+                        {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            rust.thread_notes = thread_notes;
+                            rust.thread_count = count;
+                        }
+                        qobject.as_mut().set_thread_count(count);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().thread_loaded();
+                        tracing::info!("Loaded thread with {} notes", count);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load thread: {}", e);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().error_occurred(&QString::from(&e));
+                    }
                 }
-                self.as_mut().set_thread_count(count);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().thread_loaded();
-                tracing::info!("Loaded thread with {} notes", count);
-            }
-            Ok(Err(e)) => {
-                tracing::error!("Failed to load thread: {}", e);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().error_occurred(&QString::from(&e));
-            }
-            Err(_panic) => {
-                tracing::error!("Panic occurred while loading thread");
-                self.as_mut().set_is_loading(false);
-                self.as_mut().error_occurred(&QString::from("Internal error loading thread"));
-            }
-        }
+            });
+        });
     }
     
     /// Get thread note at index

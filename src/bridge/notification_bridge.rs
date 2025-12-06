@@ -542,8 +542,10 @@ impl qobject::NotificationController {
         
         self.as_mut().set_is_loading(true);
         
-        let result = std::thread::spawn(move || {
-            NOTIFICATION_RUNTIME.block_on(async {
+        let qt_thread = self.qt_thread();
+        
+        std::thread::spawn(move || {
+            let result = NOTIFICATION_RUNTIME.block_on(async {
                 let mut manager = create_authenticated_relay_manager();
                 manager.connect().await?;
                 
@@ -580,39 +582,37 @@ impl qobject::NotificationController {
                 let oldest = notifications.last().map(|n| Timestamp::from(n.created_at as u64));
                 
                 Ok::<_, String>((notifications, profiles, oldest))
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok((mut new_notifications, profiles, oldest))) => {
-                let new_count = new_notifications.len() as i32;
-                let new_unread = new_notifications.iter().filter(|n| !n.is_read).count() as i32;
-                let (total, unread) = {
-                    let mut rust = self.as_mut().rust_mut();
-                    rust.notifications.append(&mut new_notifications);
-                    rust.profiles = profiles;
-                    if oldest.is_some() {
-                        rust.oldest_timestamp = oldest;
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok((mut new_notifications, profiles, oldest)) => {
+                        let new_count = new_notifications.len() as i32;
+                        let new_unread = new_notifications.iter().filter(|n| !n.is_read).count() as i32;
+                        let (total, unread) = {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            rust.notifications.append(&mut new_notifications);
+                            rust.profiles = profiles;
+                            if oldest.is_some() {
+                                rust.oldest_timestamp = oldest;
+                            }
+                            rust.notification_count = rust.notifications.len() as i32;
+                            rust.unread_count += new_unread;
+                            (rust.notification_count, rust.unread_count)
+                        };
+                        qobject.as_mut().set_notification_count(total);
+                        qobject.as_mut().set_unread_count(unread);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().more_loaded(new_count);
                     }
-                    rust.notification_count = rust.notifications.len() as i32;
-                    rust.unread_count += new_unread;
-                    (rust.notification_count, rust.unread_count)
-                };
-                self.as_mut().set_notification_count(total);
-                self.as_mut().set_unread_count(unread);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().more_loaded(new_count);
-            }
-            Ok(Err(e)) => {
-                tracing::error!("Failed to load more notifications: {}", e);
-                self.as_mut().set_is_loading(false);
-                self.as_mut().error_occurred(&QString::from(&e));
-            }
-            Err(_) => {
-                self.as_mut().set_is_loading(false);
-                self.as_mut().error_occurred(&QString::from("Thread panicked"));
-            }
-        }
+                    Err(e) => {
+                        tracing::error!("Failed to load more notifications: {}", e);
+                        qobject.as_mut().set_is_loading(false);
+                        qobject.as_mut().error_occurred(&QString::from(&e));
+                    }
+                }
+            });
+        });
     }
     
     /// Get notification at index

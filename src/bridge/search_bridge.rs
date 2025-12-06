@@ -4,8 +4,6 @@
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use std::pin::Pin;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use nostr_sdk::{Filter, Kind};
 
@@ -54,7 +52,11 @@ mod ffi {
         #[qsignal]
         fn error_occurred(self: Pin<&mut SearchController>, error: QString);
     }
+
+    impl cxx_qt::Threading for SearchController {}
 }
+
+use cxx_qt::Threading;
 
 // Global state
 lazy_static::lazy_static! {
@@ -116,9 +118,10 @@ impl ffi::SearchController {
         self.as_mut().set_search_type(QString::from("users"));
         
         let query_lower = query_str.to_lowercase();
+        let qt_thread = self.qt_thread();
         
-        let result = std::thread::spawn(move || {
-            SEARCH_RUNTIME.block_on(async {
+        std::thread::spawn(move || {
+            let result = SEARCH_RUNTIME.block_on(async {
                 let rm = SEARCH_RELAY_MANAGER.read().unwrap();
                 let Some(manager) = rm.as_ref() else {
                     return Err("Relay manager not initialized".to_string());
@@ -160,33 +163,30 @@ impl ffi::SearchController {
                 }
                 
                 Ok(results)
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok(results)) => {
-                let count = results.len() as i32;
-                {
-                    let mut rust = self.as_mut().rust_mut();
-                    rust.user_results = results;
-                    rust.user_count = count;
-                    rust.is_searching = false;
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok(results) => {
+                        let count = results.len() as i32;
+                        {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            rust.user_results = results;
+                            rust.user_count = count;
+                            rust.is_searching = false;
+                        }
+                        qobject.as_mut().set_user_count(count);
+                        qobject.as_mut().set_is_searching(false);
+                        qobject.as_mut().search_completed();
+                    }
+                    Err(e) => {
+                        qobject.as_mut().rust_mut().is_searching = false;
+                        qobject.as_mut().set_is_searching(false);
+                        qobject.as_mut().error_occurred(QString::from(&e));
+                    }
                 }
-                self.as_mut().set_user_count(count);
-                self.as_mut().set_is_searching(false);
-                self.as_mut().search_completed();
-            }
-            Ok(Err(e)) => {
-                self.as_mut().rust_mut().is_searching = false;
-                self.as_mut().set_is_searching(false);
-                self.as_mut().error_occurred(QString::from(&e));
-            }
-            Err(_) => {
-                self.as_mut().rust_mut().is_searching = false;
-                self.as_mut().set_is_searching(false);
-                self.as_mut().error_occurred(QString::from("Search failed"));
-            }
-        }
+            });
+        });
     }
     
     pub fn search_notes(mut self: Pin<&mut Self>, query: &QString) {
@@ -208,9 +208,10 @@ impl ffi::SearchController {
         self.as_mut().set_search_type(QString::from("notes"));
         
         let query_lower = query_str.to_lowercase();
+        let qt_thread = self.qt_thread();
         
-        let result = std::thread::spawn(move || {
-            SEARCH_RUNTIME.block_on(async {
+        std::thread::spawn(move || {
+            let result = SEARCH_RUNTIME.block_on(async {
                 let rm = SEARCH_RELAY_MANAGER.read().unwrap();
                 let Some(manager) = rm.as_ref() else {
                     return Err("Relay manager not initialized".to_string());
@@ -245,33 +246,30 @@ impl ffi::SearchController {
                 }
                 
                 Ok(results)
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok(results)) => {
-                let count = results.len() as i32;
-                {
-                    let mut rust = self.as_mut().rust_mut();
-                    rust.note_results = results;
-                    rust.note_count = count;
-                    rust.is_searching = false;
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok(results) => {
+                        let count = results.len() as i32;
+                        {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            rust.note_results = results;
+                            rust.note_count = count;
+                            rust.is_searching = false;
+                        }
+                        qobject.as_mut().set_note_count(count);
+                        qobject.as_mut().set_is_searching(false);
+                        qobject.as_mut().search_completed();
+                    }
+                    Err(e) => {
+                        qobject.as_mut().rust_mut().is_searching = false;
+                        qobject.as_mut().set_is_searching(false);
+                        qobject.as_mut().error_occurred(QString::from(&e));
+                    }
                 }
-                self.as_mut().set_note_count(count);
-                self.as_mut().set_is_searching(false);
-                self.as_mut().search_completed();
-            }
-            Ok(Err(e)) => {
-                self.as_mut().rust_mut().is_searching = false;
-                self.as_mut().set_is_searching(false);
-                self.as_mut().error_occurred(QString::from(&e));
-            }
-            Err(_) => {
-                self.as_mut().rust_mut().is_searching = false;
-                self.as_mut().set_is_searching(false);
-                self.as_mut().error_occurred(QString::from("Search failed"));
-            }
-        }
+            });
+        });
     }
     
     pub fn search_hashtag(mut self: Pin<&mut Self>, hashtag: &QString) {
@@ -294,8 +292,10 @@ impl ffi::SearchController {
         self.as_mut().set_note_count(0);
         self.as_mut().set_search_type(QString::from("hashtags"));
         
-        let result = std::thread::spawn(move || {
-            SEARCH_RUNTIME.block_on(async {
+        let qt_thread = self.qt_thread();
+        
+        std::thread::spawn(move || {
+            let result = SEARCH_RUNTIME.block_on(async {
                 let rm = SEARCH_RELAY_MANAGER.read().unwrap();
                 let Some(manager) = rm.as_ref() else {
                     return Err("Relay manager not initialized".to_string());
@@ -323,33 +323,30 @@ impl ffi::SearchController {
                 }
                 
                 Ok(results)
-            })
-        }).join();
-        
-        match result {
-            Ok(Ok(results)) => {
-                let count = results.len() as i32;
-                {
-                    let mut rust = self.as_mut().rust_mut();
-                    rust.note_results = results;
-                    rust.note_count = count;
-                    rust.is_searching = false;
+            });
+            
+            let _ = qt_thread.queue(move |mut qobject| {
+                match result {
+                    Ok(results) => {
+                        let count = results.len() as i32;
+                        {
+                            let mut rust = qobject.as_mut().rust_mut();
+                            rust.note_results = results;
+                            rust.note_count = count;
+                            rust.is_searching = false;
+                        }
+                        qobject.as_mut().set_note_count(count);
+                        qobject.as_mut().set_is_searching(false);
+                        qobject.as_mut().search_completed();
+                    }
+                    Err(e) => {
+                        qobject.as_mut().rust_mut().is_searching = false;
+                        qobject.as_mut().set_is_searching(false);
+                        qobject.as_mut().error_occurred(QString::from(&e));
+                    }
                 }
-                self.as_mut().set_note_count(count);
-                self.as_mut().set_is_searching(false);
-                self.as_mut().search_completed();
-            }
-            Ok(Err(e)) => {
-                self.as_mut().rust_mut().is_searching = false;
-                self.as_mut().set_is_searching(false);
-                self.as_mut().error_occurred(QString::from(&e));
-            }
-            Err(_) => {
-                self.as_mut().rust_mut().is_searching = false;
-                self.as_mut().set_is_searching(false);
-                self.as_mut().error_occurred(QString::from("Search failed"));
-            }
-        }
+            });
+        });
     }
     
     pub fn get_user(&self, index: i32) -> QString {
