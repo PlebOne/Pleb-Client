@@ -204,82 +204,297 @@ Rectangle {
                 
                 Item { Layout.fillWidth: true }
                 
-                // Check for new button
+                // Menu button (☰)
                 Button {
-                    text: "⬆️ New"
-                    font.pixelSize: 14
-                    
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Check for new posts"
-                    ToolTip.delay: 500
-                    
-                    background: Rectangle {
-                        color: parent.pressed ? "#1a5233" : "#1e3a2f"
-                        radius: 8
-                    }
-                    
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#22c55e"
-                        font.pixelSize: 13
-                        font.weight: Font.Medium
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    
-                    onClicked: {
-                        if (feedController) {
-                            feedController.check_for_new()
-                        }
-                    }
-                }
-                
-                // Keyboard shortcuts help button
-                Button {
-                    id: kbHelpBtn
-                    implicitWidth: 40
+                    id: menuButton
+                    implicitWidth: 42
                     implicitHeight: 36
                     
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Keyboard shortcuts (?)"
+                    ToolTip.visible: hovered && !feedMenu.visible
+                    ToolTip.text: "Menu"
                     ToolTip.delay: 500
                     
                     background: Rectangle {
-                        color: parent.pressed ? "#333333" : (parent.hovered ? "#252525" : "#1a1a1a")
+                        color: parent.pressed ? "#333333" : (feedMenu.visible ? "#333333" : (parent.hovered ? "#252525" : "#1a1a1a"))
                         radius: 8
                         border.color: "#333333"
                         border.width: 1
                     }
                     
                     contentItem: Text {
-                        text: "⌨️"
-                        font.pixelSize: 22
+                        text: "☰"
+                        font.pixelSize: 18
+                        color: "#ffffff"
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
                     
                     onClicked: {
-                        shortcutPopup.open()
+                        feedMenu.open()
+                    }
+                    
+                    Menu {
+                        id: feedMenu
+                        y: parent.height + 4
+                        
+                        background: Rectangle {
+                            implicitWidth: 220
+                            color: "#1a1a1a"
+                            border.color: "#333333"
+                            border.width: 1
+                            radius: 8
+                        }
+                        
+                        MenuItem {
+                            text: "🔄  Refresh Feed"
+                            onTriggered: {
+                                if (feedController) {
+                                    feedController.refresh()
+                                }
+                            }
+                            
+                            background: Rectangle {
+                                color: parent.highlighted ? "#333333" : "transparent"
+                                radius: 4
+                            }
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: "#ffffff"
+                                leftPadding: 8
+                            }
+                        }
+                        
+                        MenuItem {
+                            text: "⬆️  Check for New"
+                            onTriggered: {
+                                if (feedController) {
+                                    feedController.check_for_new()
+                                }
+                            }
+                            
+                            background: Rectangle {
+                                color: parent.highlighted ? "#333333" : "transparent"
+                                radius: 4
+                            }
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: "#ffffff"
+                                leftPadding: 8
+                            }
+                        }
+                        
+                        MenuItem {
+                            text: "⌨️  Keyboard Shortcuts"
+                            onTriggered: {
+                                shortcutPopup.open()
+                            }
+                            
+                            background: Rectangle {
+                                color: parent.highlighted ? "#333333" : "transparent"
+                                radius: 4
+                            }
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: "#ffffff"
+                                leftPadding: 8
+                            }
+                        }
+                        
+                        MenuSeparator {
+                            contentItem: Rectangle {
+                                implicitHeight: 1
+                                color: "#333333"
+                            }
+                        }
+                        
+                        MenuItem {
+                            text: "🐛  Bugs & Suggestions"
+                            onTriggered: {
+                                Qt.openUrlExternally("https://pleb.one/projects.html?id=e9ce79cf-6f96-498e-83fa-41f55a01f7aa")
+                            }
+                            
+                            background: Rectangle {
+                                color: parent.highlighted ? "#333333" : "transparent"
+                                radius: 4
+                            }
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: "#ffffff"
+                                leftPadding: 8
+                            }
+                        }
+                        
+                        MenuItem {
+                            text: "💜  Donate"
+                            onTriggered: {
+                                Qt.openUrlExternally("https://pleb.one/donations.html")
+                            }
+                            
+                            background: Rectangle {
+                                color: parent.highlighted ? "#333333" : "transparent"
+                                radius: 4
+                            }
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: "#ffffff"
+                                leftPadding: 8
+                            }
+                        }
+                        
+                        MenuItem {
+                            text: "ℹ️  About Pleb Client"
+                            onTriggered: {
+                                aboutPopup.open()
+                            }
+                            
+                            background: Rectangle {
+                                color: parent.highlighted ? "#333333" : "transparent"
+                                radius: 4
+                            }
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: 14
+                                color: "#ffffff"
+                                leftPadding: 8
+                            }
+                        }
                     }
                 }
+            }
+        }
+        
+        // About popup
+        Popup {
+            id: aboutPopup
+            anchors.centerIn: parent
+            width: 400
+            height: 320
+            modal: true
+            focus: true
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            
+            background: Rectangle {
+                color: "#1a1a1a"
+                border.color: "#333333"
+                border.width: 1
+                radius: 12
+            }
+            
+            contentItem: Column {
+                spacing: 16
+                padding: 24
                 
-                // Refresh button
-                Button {
-                    text: "🔄"
-                    font.pixelSize: 18
+                Text {
+                    text: "Pleb Client"
+                    font.pixelSize: 24
+                    font.bold: true
+                    color: "#ffffff"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+                
+                Text {
+                    text: "A Nostr client for the plebs"
+                    font.pixelSize: 14
+                    color: "#888888"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+                
+                Item { height: 16; width: 1 }
+                
+                Column {
+                    spacing: 12
+                    anchors.horizontalCenter: parent.horizontalCenter
                     
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Refresh feed"
-                    ToolTip.delay: 500
-                    
-                    background: Rectangle {
-                        color: parent.pressed ? "#333333" : "#1a1a1a"
-                        radius: 8
+                    Button {
+                        text: "🌐  Visit pleb.one"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        
+                        background: Rectangle {
+                            color: parent.pressed ? "#333333" : "#262626"
+                            radius: 8
+                            border.color: "#444444"
+                            border.width: 1
+                        }
+                        
+                        contentItem: Text {
+                            text: parent.text
+                            font.pixelSize: 14
+                            color: "#ffffff"
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            leftPadding: 16
+                            rightPadding: 16
+                            topPadding: 8
+                            bottomPadding: 8
+                        }
+                        
+                        onClicked: {
+                            Qt.openUrlExternally("https://pleb.one")
+                        }
                     }
                     
-                    onClicked: {
-                        if (feedController) {
-                            feedController.refresh()
+                    Button {
+                        text: "💜  Support Development"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        
+                        background: Rectangle {
+                            color: parent.pressed ? "#6b21a8" : "#7c3aed"
+                            radius: 8
+                        }
+                        
+                        contentItem: Text {
+                            text: parent.text
+                            font.pixelSize: 14
+                            color: "#ffffff"
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            leftPadding: 16
+                            rightPadding: 16
+                            topPadding: 8
+                            bottomPadding: 8
+                        }
+                        
+                        onClicked: {
+                            Qt.openUrlExternally("https://pleb.one/donations.html")
+                        }
+                    }
+                    
+                    Button {
+                        text: "🐛  Report Bugs"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        
+                        background: Rectangle {
+                            color: parent.pressed ? "#333333" : "#262626"
+                            radius: 8
+                            border.color: "#444444"
+                            border.width: 1
+                        }
+                        
+                        contentItem: Text {
+                            text: parent.text
+                            font.pixelSize: 14
+                            color: "#ffffff"
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            leftPadding: 16
+                            rightPadding: 16
+                            topPadding: 8
+                            bottomPadding: 8
+                        }
+                        
+                        onClicked: {
+                            Qt.openUrlExternally("https://pleb.one/projects.html?id=e9ce79cf-6f96-498e-83fa-41f55a01f7aa")
                         }
                     }
                 }

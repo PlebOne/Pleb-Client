@@ -1,0 +1,43 @@
+app-id: one.pleb.PlebClient
+runtime: org.kde.Platform
+runtime-version: '6.7'
+sdk: org.kde.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.llvm18
+
+command: pleb_client_qt
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=xdg-config/pleb-client:create
+  - --filesystem=xdg-data/pleb-client:create
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.Notifications
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm18/bin
+  env:
+    CARGO_HOME: /run/build/pleb-client/cargo
+    RUSTFLAGS: -L/usr/lib/sdk/llvm18/lib
+    LIBCLANG_PATH: /usr/lib/sdk/llvm18/lib
+
+modules:
+  - name: pleb-client
+    buildsystem: simple
+    build-commands:
+      - cargo --offline build --release
+      - install -Dm755 target/release/pleb_client_qt /app/bin/pleb_client_qt
+      - install -Dm644 resources/pleb-client.desktop /app/share/applications/one.pleb.PlebClient.desktop
+      - install -Dm644 resources/icons/icon-256.png /app/share/icons/hicolor/256x256/apps/one.pleb.PlebClient.png
+      - install -Dm644 resources/icons/icon.svg /app/share/icons/hicolor/scalable/apps/one.pleb.PlebClient.svg
+      - install -Dm644 packaging/flatpak/one.pleb.PlebClient.metainfo.xml /app/share/metainfo/one.pleb.PlebClient.metainfo.xml
+    sources:
+      - type: dir
+        path: ../..
+      - cargo-sources.json

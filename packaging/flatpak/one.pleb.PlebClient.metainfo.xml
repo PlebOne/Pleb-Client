@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>one.pleb.PlebClient</id>
+  <name>Pleb Client</name>
+  <summary>A native Nostr client for Linux</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="one.pleb">
+    <name>PlebOne</name>
+  </developer>
+  <description>
+    <p>
+      Pleb Client is a desktop Nostr client built with Qt/QML for Linux.
+      It provides a native desktop experience for the Nostr decentralized social network.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Following feed, replies, and global timeline</li>
+      <li>Direct messages (NIP-04 encrypted)</li>
+      <li>Notifications for mentions, replies, and zaps</li>
+      <li>Profile management</li>
+      <li>Zaps via Nostr Wallet Connect (NWC)</li>
+      <li>Media support (images, videos)</li>
+      <li>Keyboard navigation</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">one.pleb.PlebClient.desktop</launchable>
+  <url type="homepage">https://pleb.one</url>
+  <url type="bugtracker">https://pleb.one/projects.html?id=e9ce79cf-6f96-498e-83fa-41f55a01f7aa</url>
+  <url type="donation">https://pleb.one/donations.html</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main feed view</caption>
+      <image>https://pleb.one/screenshots/pleb-client-feed.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-info">intense</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="0.1.0" date="2024-12-06">
+      <description>
+        <p>Initial release of Pleb Client</p>
+        <ul>
+          <li>Following, replies, and global feeds</li>
+          <li>Direct messages with NIP-04 encryption</li>
+          <li>Notifications</li>
+          <li>Profile viewing and editing</li>
+          <li>Zaps via NWC</li>
+          <li>Media embedding</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>Network</category>
+    <category>InstantMessaging</category>
+    <category>Chat</category>
+  </categories>
+  <keywords>
+    <keyword>nostr</keyword>
+    <keyword>social</keyword>
+    <keyword>decentralized</keyword>
+    <keyword>bitcoin</keyword>
+    <keyword>lightning</keyword>
+  </keywords>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+</component>
