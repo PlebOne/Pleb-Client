@@ -158,6 +158,36 @@ impl RelayManager {
         Ok(following)
     }
     
+    /// Fetch followers of a user (users who follow this pubkey)
+    /// This searches for contact lists that include the target pubkey
+    pub async fn fetch_followers(&self, pubkey: &PublicKey) -> Result<Vec<PublicKey>, String> {
+        // Search for contact lists (kind 3) that tag this pubkey
+        // This is an expensive query - relays may limit results
+        let filter = Filter::new()
+            .kind(Kind::ContactList)
+            .pubkey(*pubkey)  // Filter for events that tag this pubkey
+            .limit(500);  // Limit to prevent overload
+        
+        let events = self.client
+            .fetch_events(filter, Duration::from_secs(15))  // Longer timeout for this query
+            .await
+            .map_err(|e| format!("Failed to fetch followers: {}", e))?;
+        
+        // Extract unique authors (the followers)
+        let mut followers: Vec<PublicKey> = events
+            .iter()
+            .map(|e| e.pubkey)
+            .collect();
+        
+        // Deduplicate
+        followers.sort_by_key(|pk| pk.to_hex());
+        followers.dedup();
+        
+        tracing::info!("Fetched {} followers for {}", followers.len(), pubkey.to_hex());
+        
+        Ok(followers)
+    }
+    
     /// Fetch all notes from followed users (posts, replies, reposts - everything)
     pub async fn fetch_following_feed(&self, limit: u64, until: Option<Timestamp>) -> Result<Events, String> {
         if self.following.is_empty() {

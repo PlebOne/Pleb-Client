@@ -3,3 +3,7 @@ Cargo.lock
 *.swp
 *.swo
 .DS_Store
+
+# Build artifacts
+/build/
+.vscode/

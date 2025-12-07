@@ -309,8 +309,8 @@ impl qobject::ProfileController {
                 // Fetch following list
                 let following = manager.fetch_contact_list(&pk).await?;
                 
-                // Fetch followers (expensive - skip for now)
-                let followers: Vec<PublicKey> = Vec::new();
+                // Fetch followers (users who follow this pubkey)
+                let followers = manager.fetch_followers(&pk).await.unwrap_or_default();
                 
                 Ok::<_, String>((profile, following, followers, pk))
             });
@@ -331,11 +331,21 @@ impl qobject::ProfileController {
                         })
                         .collect();
                     
+                    let followers_items: Vec<ProfileListItem> = followers.iter()
+                        .map(|pk| ProfileListItem {
+                            pubkey: pk.to_hex(),
+                            name: None,
+                            display_name: None,
+                            picture: None,
+                            nip05: None,
+                        })
+                        .collect();
+                    
                     let _ = qt_thread.queue(move |mut qobject| {
                         {
                             let mut rust = qobject.as_mut().rust_mut();
                             rust.following_list = following_items;
-                            rust.followers_list = Vec::new();
+                            rust.followers_list = followers_items;
                         }
                         
                         if let Some(p) = profile {
