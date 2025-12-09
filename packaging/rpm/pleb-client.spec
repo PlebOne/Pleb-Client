@@ -1,5 +1,5 @@
 Name:           pleb-client
-Version:        0.1.1
+Version:        0.1.2
 Release:        1%{?dist}
 Summary:        A native Nostr client for Linux
 
@@ -36,6 +36,13 @@ install -m 644 %{_sourcedir}/icon.svg %{buildroot}/usr/share/icons/hicolor/scala
 /usr/share/icons/hicolor/scalable/apps/pleb-client.svg
 
 %changelog
+* Mon Dec 09 2024 PlebOne <contact@pleb.one> - 0.1.2-1
+- Add reply/repost counts to note stats display
+- Add feed filtering (Pictures, Replies, Reposts checkboxes)
+- Fix login screen focus issue where window fell behind
+- Real-time stats updates for visible notes
+- Performance improvements for stats fetching
+
 * Sat Dec 07 2024 PlebOne <contact@pleb.one> - 0.1.1-1
 - Add Relays screen with NIP-65 relay management
 - Click on user avatars/names to view profiles

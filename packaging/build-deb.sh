@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 PACKAGE_NAME="pleb-client"
 BUILD_DIR="build/deb"
 INSTALL_ROOT="$BUILD_DIR/${PACKAGE_NAME}_${VERSION}_amd64"

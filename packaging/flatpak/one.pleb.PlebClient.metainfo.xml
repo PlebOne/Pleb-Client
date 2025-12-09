@@ -39,6 +39,18 @@
     <content_attribute id="social-info">intense</content_attribute>
   </content_rating>
   <releases>
+    <release version="0.1.2" date="2024-12-09">
+      <description>
+        <p>Feed filtering and stats improvements</p>
+        <ul>
+          <li>Add reply and repost counts to note stats display</li>
+          <li>Add feed filtering with Pictures, Replies, Reposts checkboxes</li>
+          <li>Fix login screen focus issue where window fell behind</li>
+          <li>Real-time stats updates for visible notes</li>
+          <li>Performance improvements for stats fetching</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.1" date="2024-12-07">
       <description>
         <p>Relays screen and profile navigation</p>

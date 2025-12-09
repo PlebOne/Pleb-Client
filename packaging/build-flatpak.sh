@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 APP_ID="one.pleb.PlebClient"
 BUILD_DIR="build/flatpak"
 REPO_DIR="build/flatpak-repo"
