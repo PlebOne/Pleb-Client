@@ -127,6 +127,12 @@ Rectangle {
         if (stats.zapCount !== undefined) {
             root.zapCount = stats.zapCount
         }
+        if (stats.replyCount !== undefined) {
+            root.replies = stats.replyCount
+        }
+        if (stats.repostCount !== undefined) {
+            root.reposts = stats.repostCount
+        }
         root.statsLoaded = true
         root.statsLoading = false
     }

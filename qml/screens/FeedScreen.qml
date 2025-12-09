@@ -6,7 +6,8 @@ import "../components"
 Rectangle {
     id: root
     color: "#0a0a0a"
-    focus: true
+    // Don't grab focus by default - let the active screen handle it
+    focus: false
     
     property var feedController: null
     property var appController: null
@@ -70,28 +71,146 @@ Rectangle {
             // Switch to Following feed
             if (feedController) feedController.load_feed("following")
             event.accepted = true
-        } else if (event.key === Qt.Key_2) {
-            // Switch to Replies feed
-            if (feedController) feedController.load_feed("replies")
-            event.accepted = true
-        } else if (event.key === Qt.Key_3 && appController && appController.show_global_feed) {
+        } else if (event.key === Qt.Key_2 && appController && appController.show_global_feed) {
             // Switch to Global feed (if enabled)
             if (feedController) feedController.load_feed("global")
             event.accepted = true
         }
     }
     
-    // Ensure focus when visible
-    onVisibleChanged: if (visible) forceActiveFocus()
+    // Ensure focus when visible AND is the current screen
+    onVisibleChanged: {
+        if (visible && appController && appController.current_screen === "feed") {
+            forceActiveFocus()
+        }
+    }
     
     // Feed types - dynamically computed based on settings
     property var feedTypes: {
-        var types = ["Following", "Replies"]  // Following = posts only, Replies = combined
+        var types = ["Following"]
         if (appController && appController.show_global_feed) {
             types.push("Global")
         }
         return types
     }
+    
+    // Filter states - all checked by default
+    property bool showPictures: true
+    property bool showReplies: true
+    property bool showReposts: true
+    
+    // Filtered notes list
+    property var filteredIndices: []
+    
+    // Real-time stats cache - noteId -> stats object
+    property var liveStatsCache: ({})
+    
+    // Signal to notify NoteCards of stats updates
+    signal statsUpdated(string noteId, var stats)
+    
+    // Timer to periodically refresh stats for visible notes
+    Timer {
+        id: statsRefreshTimer
+        interval: 30000  // Refresh every 30 seconds
+        repeat: true
+        running: root.visible && feedController !== null
+        onTriggered: {
+            root.refreshVisibleStats()
+        }
+    }
+    
+    // Function to collect visible note IDs and request refresh
+    function refreshVisibleStats() {
+        if (!feedController || !feedList.count) return
+        
+        // Get the indices of visible items
+        var firstVisible = Math.max(0, Math.floor(feedList.contentY / 150))  // Approx height
+        var visibleCount = Math.ceil(feedList.height / 150) + 2  // +2 for buffer
+        var lastVisible = Math.min(firstVisible + visibleCount, feedList.count - 1)
+        
+        // Collect note IDs for visible items
+        var noteIds = []
+        for (var i = firstVisible; i <= lastVisible && i < root.filteredIndices.length; i++) {
+            var actualIndex = root.filteredIndices[i]
+            if (actualIndex !== undefined && actualIndex >= 0) {
+                var noteJson = feedController.get_note(actualIndex)
+                if (noteJson) {
+                    try {
+                        var note = JSON.parse(noteJson)
+                        if (note.id) {
+                            noteIds.push(note.id)
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+        
+        if (noteIds.length > 0) {
+            feedController.refresh_visible_stats(JSON.stringify(noteIds))
+        }
+    }
+    
+    // Timer to fetch stats shortly after feed loads (debounced)
+    Timer {
+        id: initialStatsTimer
+        interval: 500  // Wait 500ms after feed loads
+        repeat: false
+        onTriggered: root.refreshVisibleStats()
+    }
+    
+    // Timer for periodic stats refresh (real-time updates)
+    Timer {
+        id: periodicStatsTimer
+        interval: 30000  // Refresh stats every 30 seconds
+        repeat: true
+        running: root.visible && feedController !== null
+        onTriggered: root.refreshVisibleStats()
+    }
+    
+    // Update filtered indices when filters or notes change
+    function updateFilteredNotes() {
+        var indices = []
+        var count = feedController ? feedController.note_count : 0
+        
+        for (var i = 0; i < count; i++) {
+            var noteJson = feedController.get_note(i)
+            if (noteJson) {
+                var note = JSON.parse(noteJson)
+                var hasImages = note.images && note.images.length > 0
+                var isReply = note.isReply || false
+                var isRepost = note.isRepost || false
+                
+                // Apply filters
+                var passesFilter = true
+                
+                // If showPictures is unchecked, hide notes with images
+                if (!showPictures && hasImages) {
+                    passesFilter = false
+                }
+                
+                // If showReplies is unchecked, hide replies
+                if (!showReplies && isReply) {
+                    passesFilter = false
+                }
+                
+                // If showReposts is unchecked, hide reposts
+                if (!showReposts && isRepost) {
+                    passesFilter = false
+                }
+                
+                if (passesFilter) {
+                    indices.push(i)
+                }
+            }
+        }
+        
+        filteredIndices = indices
+    }
+    
+    // Re-filter when filter states change
+    onShowPicturesChanged: updateFilteredNotes()
+    onShowRepliesChanged: updateFilteredNotes()
+    onShowRepostsChanged: updateFilteredNotes()
     
     // Helper function for empty message
     function getFeedEmptyMessage() {
@@ -111,20 +230,40 @@ Rectangle {
         target: feedController
         ignoreUnknownSignals: true
         function onFeed_updated() {
-            feedList.model = feedController ? feedController.note_count : 0
+            root.updateFilteredNotes()
+            // Fetch stats for visible notes after feed loads
+            initialStatsTimer.restart()
         }
         function onMore_loaded(count) {
-            feedList.model = feedController ? feedController.note_count : 0
+            root.updateFilteredNotes()
+            // Fetch stats for newly loaded notes
+            initialStatsTimer.restart()
         }
         function onNew_notes_found(count) {
-            feedList.model = feedController ? feedController.note_count : 0
+            root.updateFilteredNotes()
             if (count > 0) {
                 // Scroll to top to show new notes
                 feedList.positionViewAtBeginning()
+                // Fetch stats for new notes
+                initialStatsTimer.restart()
             }
         }
         function onError_occurred(error) {
             console.log("Feed error:", error)
+        }
+        // Handle real-time stats updates
+        function onNote_stats_ready(noteId, statsJson) {
+            try {
+                var stats = JSON.parse(statsJson)
+                // Update the live stats cache
+                var newCache = root.liveStatsCache
+                newCache[noteId] = stats
+                root.liveStatsCache = newCache
+                // Emit signal to notify NoteCards
+                root.statsUpdated(noteId, stats)
+            } catch (e) {
+                console.log("Failed to parse stats JSON:", e)
+            }
         }
     }
     
@@ -199,6 +338,155 @@ Rectangle {
                                         parent.color = "transparent"
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+                
+                // Separator
+                Rectangle {
+                    width: 1
+                    height: 24
+                    color: "#333333"
+                    Layout.leftMargin: 8
+                    Layout.rightMargin: 8
+                }
+                
+                // Filter checkboxes
+                Row {
+                    spacing: 16
+                    
+                    // Pictures filter
+                    Row {
+                        spacing: 6
+                        height: 32
+                        
+                        Rectangle {
+                            id: picturesCheck
+                            width: 18
+                            height: 18
+                            radius: 4
+                            color: root.showPictures ? "#9333ea" : "transparent"
+                            border.color: root.showPictures ? "#9333ea" : "#555555"
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✓"
+                                color: "#ffffff"
+                                font.pixelSize: 11
+                                font.bold: true
+                                visible: root.showPictures
+                            }
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showPictures = !root.showPictures
+                            }
+                        }
+                        
+                        Text {
+                            text: "Pictures"
+                            font.pixelSize: 13
+                            color: root.showPictures ? "#ffffff" : "#888888"
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showPictures = !root.showPictures
+                            }
+                        }
+                    }
+                    
+                    // Replies filter
+                    Row {
+                        spacing: 6
+                        height: 32
+                        
+                        Rectangle {
+                            id: repliesCheck
+                            width: 18
+                            height: 18
+                            radius: 4
+                            color: root.showReplies ? "#9333ea" : "transparent"
+                            border.color: root.showReplies ? "#9333ea" : "#555555"
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✓"
+                                color: "#ffffff"
+                                font.pixelSize: 11
+                                font.bold: true
+                                visible: root.showReplies
+                            }
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showReplies = !root.showReplies
+                            }
+                        }
+                        
+                        Text {
+                            text: "Replies"
+                            font.pixelSize: 13
+                            color: root.showReplies ? "#ffffff" : "#888888"
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showReplies = !root.showReplies
+                            }
+                        }
+                    }
+                    
+                    // Reposts filter
+                    Row {
+                        spacing: 6
+                        height: 32
+                        
+                        Rectangle {
+                            id: repostsCheck
+                            width: 18
+                            height: 18
+                            radius: 4
+                            color: root.showReposts ? "#9333ea" : "transparent"
+                            border.color: root.showReposts ? "#9333ea" : "#555555"
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✓"
+                                color: "#ffffff"
+                                font.pixelSize: 11
+                                font.bold: true
+                                visible: root.showReposts
+                            }
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showReposts = !root.showReposts
+                            }
+                        }
+                        
+                        Text {
+                            text: "Reposts"
+                            font.pixelSize: 13
+                            color: root.showReposts ? "#ffffff" : "#888888"
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showReposts = !root.showReposts
                             }
                         }
                     }
@@ -532,20 +820,21 @@ Rectangle {
                 minimumSize: 0.1
             }
             
-            model: feedController ? feedController.note_count : 0
+            model: root.filteredIndices.length
             
             delegate: NoteCard {
                 id: noteDelegate
                 width: feedList.width - 40
                 feedController: root.feedController  // Pass for embedded content
                 
-                // Track the index this delegate is displaying
+                // Track the index this delegate is displaying (mapped through filter)
                 property int displayIndex: index
+                property int actualNoteIndex: root.filteredIndices[index] !== undefined ? root.filteredIndices[index] : -1
                 
                 // Function to load note data for the current index
                 function loadNoteData() {
-                    if (root.feedController && displayIndex >= 0) {
-                        var noteJson = root.feedController.get_note(displayIndex)
+                    if (root.feedController && actualNoteIndex >= 0) {
+                        var noteJson = root.feedController.get_note(actualNoteIndex)
                         if (noteJson) {
                             var note = JSON.parse(noteJson)
                             noteId = note.id || ""
@@ -577,6 +866,7 @@ Rectangle {
                 
                 // Reload data when index changes (delegate reuse)
                 onDisplayIndexChanged: loadNoteData()
+                onActualNoteIndexChanged: loadNoteData()
                 
                 // Handle delegate reuse - reload data when pooled/reused
                 ListView.onPooled: {
@@ -599,6 +889,43 @@ Rectangle {
                 ListView.onReused: {
                     // Reload data when delegate is reused for a new index
                     loadNoteData()
+                }
+                
+                // Listen for real-time stats updates from parent
+                Connections {
+                    target: root
+                    function onStatsUpdated(updatedNoteId, stats) {
+                        if (noteDelegate.noteId === updatedNoteId) {
+                            // Update stats in real-time
+                            if (stats.reactions !== undefined) {
+                                noteDelegate.reactions = stats.reactions
+                            }
+                            if (stats.zapAmount !== undefined) {
+                                noteDelegate.zapAmount = stats.zapAmount
+                            }
+                            if (stats.zapCount !== undefined) {
+                                noteDelegate.zapCount = stats.zapCount
+                            }
+                            if (stats.replyCount !== undefined) {
+                                noteDelegate.replies = stats.replyCount
+                            }
+                            if (stats.repostCount !== undefined) {
+                                noteDelegate.reposts = stats.repostCount
+                            }
+                            // Calculate total likes from reactions (❤️ + 👍 + +)
+                            var likeCount = 0
+                            if (stats.reactions) {
+                                for (var emoji in stats.reactions) {
+                                    if (emoji === "❤️" || emoji === "👍" || emoji === "+") {
+                                        likeCount += stats.reactions[emoji]
+                                    }
+                                }
+                            }
+                            if (likeCount > 0) {
+                                noteDelegate.likes = likeCount
+                            }
+                        }
+                    }
                 }
                 
                 onLikeClicked: feedController.like_note(noteId)
@@ -725,6 +1052,33 @@ Rectangle {
                     wrapMode: Text.WordWrap
                     width: Math.min(400, root.width - 80)
                     horizontalAlignment: Text.AlignHCenter
+                }
+            }
+            
+            // Filtered empty state - when filters hide all content
+            Column {
+                anchors.centerIn: parent
+                spacing: 12
+                visible: feedController && !feedController.is_loading && feedController.note_count > 0 && root.filteredIndices.length === 0
+                
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "🔍"
+                    font.pixelSize: 48
+                }
+                
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "No posts match your filters"
+                    color: "#666666"
+                    font.pixelSize: 16
+                }
+                
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "Try enabling more filter options above"
+                    color: "#555555"
+                    font.pixelSize: 13
                 }
             }
         }

@@ -72,6 +72,11 @@ pub mod qobject {
         #[qinvokable]
         fn fetch_note_stats(self: Pin<&mut FeedController>, note_id: &QString) -> QString;
         
+        /// Refresh stats for multiple notes at once (for visible notes)
+        /// Takes a JSON array of note IDs, fetches fresh stats, and emits note_stats_ready for each
+        #[qinvokable]
+        fn refresh_visible_stats(self: Pin<&mut FeedController>, note_ids_json: &QString);
+        
         /// Get cached note stats (non-blocking, read-only)
         /// Returns cached stats or loading state if fetch is in progress
         #[qinvokable]
@@ -1595,17 +1600,21 @@ impl qobject::FeedController {
                 let stats = manager.fetch_note_stats(&[event_id]).await?;
                 
                 // Get the stats for this specific note
-                if let Some((reactions, zap_amount, zap_count)) = stats.get(&note_id_clone) {
+                if let Some((reactions, zap_amount, zap_count, reply_count, repost_count)) = stats.get(&note_id_clone) {
                     Ok(serde_json::json!({
                         "reactions": reactions,
                         "zapAmount": zap_amount,
-                        "zapCount": zap_count
+                        "zapCount": zap_count,
+                        "replyCount": reply_count,
+                        "repostCount": repost_count
                     }).to_string())
                 } else {
                     Ok(serde_json::json!({
                         "reactions": {},
                         "zapAmount": 0,
-                        "zapCount": 0
+                        "zapCount": 0,
+                        "replyCount": 0,
+                        "repostCount": 0
                     }).to_string())
                 }
             });
@@ -1621,7 +1630,7 @@ impl qobject::FeedController {
                     tracing::warn!("Failed to fetch note stats for {}: {}", note_id_clone, e);
                     // Cache empty result to prevent repeated failed fetches
                     if let Ok(mut cache) = NOTE_STATS_CACHE.write() {
-                        cache.insert(note_id_clone.clone(), r#"{"reactions":{},"zapAmount":0,"zapCount":0}"#.to_string());
+                        cache.insert(note_id_clone.clone(), r#"{"reactions":{},"zapAmount":0,"zapCount":0,"replyCount":0,"repostCount":0}"#.to_string());
                     }
                 }
             }
@@ -1655,6 +1664,92 @@ impl qobject::FeedController {
         
         // Not in cache and not pending
         QString::from(r#"{"reactions":{},"zapAmount":0,"zapCount":0}"#)
+    }
+    
+    /// Refresh stats for multiple notes at once (for visible notes)
+    /// Takes a JSON array of note IDs, fetches fresh stats, and emits note_stats_ready for each
+    pub fn refresh_visible_stats(self: Pin<&mut Self>, note_ids_json: &QString) {
+        let note_ids_str = note_ids_json.to_string();
+        
+        // Parse the JSON array
+        let note_ids: Vec<String> = match serde_json::from_str(&note_ids_str) {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!("Failed to parse note IDs JSON: {}", e);
+                return;
+            }
+        };
+        
+        if note_ids.is_empty() {
+            return;
+        }
+        
+        // Limit to 20 notes per batch to avoid overwhelming relays
+        let note_ids: Vec<String> = note_ids.into_iter().take(20).collect();
+        
+        // Get qt_thread for emitting signals
+        let qt_thread = self.qt_thread();
+        
+        // Spawn background fetch
+        std::thread::spawn(move || {
+            let result: Result<Vec<(String, String)>, String> = FEED_RUNTIME.block_on(async {
+                // Parse event IDs
+                let event_ids: Vec<EventId> = note_ids.iter()
+                    .filter_map(|id| EventId::from_hex(id).ok())
+                    .collect();
+                
+                if event_ids.is_empty() {
+                    return Ok(vec![]);
+                }
+                
+                // Get relay manager
+                let rm = RELAY_MANAGER.read().unwrap();
+                let manager = rm.as_ref().ok_or_else(|| "Not connected to relays".to_string())?;
+                
+                // Fetch stats for all notes at once
+                let stats = manager.fetch_note_stats(&event_ids).await?;
+                
+                // Build results
+                let mut results = Vec::new();
+                for (note_id, (reactions, zap_amount, zap_count, reply_count, repost_count)) in stats {
+                    let json = serde_json::json!({
+                        "reactions": reactions,
+                        "zapAmount": zap_amount,
+                        "zapCount": zap_count,
+                        "replyCount": reply_count,
+                        "repostCount": repost_count
+                    }).to_string();
+                    
+                    // Update cache
+                    if let Ok(mut cache) = NOTE_STATS_CACHE.write() {
+                        cache.insert(note_id.clone(), json.clone());
+                    }
+                    
+                    results.push((note_id, json));
+                }
+                
+                Ok(results)
+            });
+            
+            // Emit signals for each updated note
+            match result {
+                Ok(stats_list) => {
+                    for (note_id, stats_json) in stats_list {
+                        let note_id_clone = note_id.clone();
+                        let stats_json_clone = stats_json.clone();
+                        let _ = qt_thread.queue(move |mut qobject| {
+                            qobject.as_mut().note_stats_ready(
+                                &QString::from(&note_id_clone),
+                                &QString::from(&stats_json_clone)
+                            );
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to refresh visible stats: {}", e);
+                }
+            }
+        });
     }
     
     /// Repost a note (kind 6)

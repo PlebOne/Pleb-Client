@@ -567,10 +567,10 @@ impl RelayManager {
         Ok(combined)
     }
     
-    /// Fetch reactions and zaps for specific note IDs
-    /// Returns a map of note_id -> (reactions_map, zap_total, zap_count)
+    /// Fetch reactions, zaps, replies, and reposts for specific note IDs
+    /// Returns a map of note_id -> (reactions_map, zap_total, zap_count, reply_count, repost_count)
     /// where reactions_map is emoji -> count
-    pub async fn fetch_note_stats(&self, note_ids: &[EventId]) -> Result<std::collections::HashMap<String, (std::collections::HashMap<String, u32>, u64, u32)>, String> {
+    pub async fn fetch_note_stats(&self, note_ids: &[EventId]) -> Result<std::collections::HashMap<String, (std::collections::HashMap<String, u32>, u64, u32, u32, u32)>, String> {
         if note_ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
@@ -587,16 +587,31 @@ impl RelayManager {
             .events(note_ids.to_vec())
             .limit(200);
         
-        let (reactions_result, zaps_result) = tokio::join!(
+        // Fetch replies (kind 1 that tag these notes)
+        let reply_filter = Filter::new()
+            .kind(Kind::TextNote)
+            .events(note_ids.to_vec())
+            .limit(500);
+        
+        // Fetch reposts (kind 6) for these notes
+        let repost_filter = Filter::new()
+            .kind(Kind::Repost)
+            .events(note_ids.to_vec())
+            .limit(200);
+        
+        let (reactions_result, zaps_result, replies_result, reposts_result) = tokio::join!(
             self.client.fetch_events(reaction_filter, DEFAULT_TIMEOUT),
-            self.client.fetch_events(zap_filter, DEFAULT_TIMEOUT)
+            self.client.fetch_events(zap_filter, DEFAULT_TIMEOUT),
+            self.client.fetch_events(reply_filter, DEFAULT_TIMEOUT),
+            self.client.fetch_events(repost_filter, DEFAULT_TIMEOUT)
         );
         
-        let mut stats: std::collections::HashMap<String, (std::collections::HashMap<String, u32>, u64, u32)> = std::collections::HashMap::new();
+        // stats: (reactions_map, zap_total, zap_count, reply_count, repost_count)
+        let mut stats: std::collections::HashMap<String, (std::collections::HashMap<String, u32>, u64, u32, u32, u32)> = std::collections::HashMap::new();
         
         // Initialize stats for all requested note IDs
         for note_id in note_ids {
-            stats.insert(note_id.to_hex(), (std::collections::HashMap::new(), 0, 0));
+            stats.insert(note_id.to_hex(), (std::collections::HashMap::new(), 0, 0, 0, 0));
         }
         
         // Process reactions
@@ -606,7 +621,7 @@ impl RelayManager {
                 for tag in event.tags.iter() {
                     if let Some(TagStandard::Event { event_id, .. }) = tag.as_standardized() {
                         let note_id_hex = event_id.to_hex();
-                        if let Some((reactions_map, _, _)) = stats.get_mut(&note_id_hex) {
+                        if let Some((reactions_map, _, _, _, _)) = stats.get_mut(&note_id_hex) {
                             // The emoji is in the content - if empty or "+", use "❤️"
                             let emoji = if event.content.is_empty() || event.content == "+" {
                                 "❤️".to_string()
@@ -628,6 +643,7 @@ impl RelayManager {
         
         // Process zaps
         if let Ok(zaps) = zaps_result {
+            tracing::debug!("Processing {} zap events", zaps.len());
             for event in zaps.iter() {
                 // Find which note this zap is for and extract amount
                 let mut target_note: Option<String> = None;
@@ -643,6 +659,7 @@ impl RelayManager {
                             // The amount is in the invoice string after "lnbc" or "lntb"
                             if let Some(amount) = extract_bolt11_amount(&invoice.to_string()) {
                                 amount_msats = amount;
+                                tracing::debug!("Extracted {} msats from bolt11", amount);
                             }
                         }
                         _ => {}
@@ -653,15 +670,59 @@ impl RelayManager {
                         if let Some(amount_str) = tag.content() {
                             if let Ok(amt) = amount_str.parse::<u64>() {
                                 amount_msats = amt;
+                                tracing::debug!("Found amount tag: {} msats", amt);
                             }
                         }
                     }
                 }
                 
                 if let Some(note_id_hex) = target_note {
-                    if let Some((_, zap_total, zap_count)) = stats.get_mut(&note_id_hex) {
-                        *zap_total += amount_msats / 1000; // Convert msats to sats
+                    if let Some((_, zap_total, zap_count, _, _)) = stats.get_mut(&note_id_hex) {
+                        let sats = amount_msats / 1000;
+                        tracing::debug!("Adding {} sats to note {}", sats, &note_id_hex[..8]);
+                        *zap_total += sats;
                         *zap_count += 1;
+                    }
+                }
+            }
+        }
+        
+        // Process replies
+        if let Ok(replies) = replies_result {
+            tracing::debug!("Processing {} reply events", replies.len());
+            for event in replies.iter() {
+                // Find which note this is a reply to
+                for tag in event.tags.iter() {
+                    if let Some(TagStandard::Event { event_id, marker, .. }) = tag.as_standardized() {
+                        // Only count direct replies (with reply marker or root if no reply marker)
+                        let is_direct_reply = match marker {
+                            Some(m) => *m == Marker::Reply,
+                            None => true, // Legacy format - first e tag is the reply target
+                        };
+                        if is_direct_reply {
+                            let note_id_hex = event_id.to_hex();
+                            if let Some((_, _, _, reply_count, _)) = stats.get_mut(&note_id_hex) {
+                                *reply_count += 1;
+                                tracing::debug!("Added reply to note {}", &note_id_hex[..8]);
+                            }
+                            break; // Only count once per event
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process reposts
+        if let Ok(reposts) = reposts_result {
+            for event in reposts.iter() {
+                // Find which note was reposted
+                for tag in event.tags.iter() {
+                    if let Some(TagStandard::Event { event_id, .. }) = tag.as_standardized() {
+                        let note_id_hex = event_id.to_hex();
+                        if let Some((_, _, _, _, repost_count)) = stats.get_mut(&note_id_hex) {
+                            *repost_count += 1;
+                        }
+                        break; // Only count once per event
                     }
                 }
             }
